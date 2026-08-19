@@ -1,27 +1,51 @@
-# AIDEClone — M1 + M2: Editor, File Browser, On-Device Compiler
+# AIDEClone — M1 + M2 + M3: Editor, Compiler, Dex/Package/Sign Pipeline
 
-M1: project file tree + code editor. M2 (new): whole-project compilation
-via ECJ, with errors shown both as inline squiggles in the editor and in
-a bottom build-output log panel.
+M1: project file tree + code editor. M2: whole-project ECJ compilation
+with inline + log-panel diagnostics. M3 (new): dex + resource/manifest
+packaging + signing → an actual installable APK, all pure-JVM (no native
+aapt2/apksigner binaries needed).
 
 ## What's here
-- `MainActivity` — file/project tree (RecyclerView, expand/collapse folders,
-  "New Project" FAB, "Compile" toolbar action, and the build-output log
-  panel with a tap-to-jump diagnostics list).
-- `EditorActivity` — opens a tapped file into **Sora Editor**
-  (`io.github.Rosemoe.sora-editor`), with Java syntax highlighting,
-  save-on-exit, inline squiggly diagnostics from the last compile run, and
-  jump-to-line when opened from the log panel.
-- `ProjectModel` — flattens a directory into a displayable tree; this is
-  the seam where M3's real project/build model will replace the current
-  bare-bones skeleton generator.
-- `compiler/CompileEngine` — wraps ECJ (`org.eclipse.jdt:ecj`) in batch
-  mode, compiling every `.java` file under the project root to
-  `<project>/build/classes`, and parses ECJ's console output into
-  structured `CompileDiagnostic`s.
-- `compiler/CompileResultStore` — in-memory singleton bridging the last
-  compile result from `MainActivity` to whichever file `EditorActivity`
-  opens next.
+- `MainActivity` — file/project tree, **Compile**, **Build APK**, and
+  **Import android.jar** toolbar actions, plus the build-output log panel.
+- `EditorActivity` — Sora Editor integration: Java syntax highlighting,
+  save-on-exit, inline squiggly diagnostics, jump-to-line.
+- `ProjectModel` — file tree + tiny `project.properties` (package name,
+  app name, main activity class) that M3's build needs. New project
+  skeletons now scaffold a real `android.app.Activity` subclass instead
+  of a plain Java class, so the resulting APK is actually launchable.
+- `compiler/CompileEngine` — ECJ batch compilation with diagnostics,
+  now accepting a classpath (for `android.jar`).
+- `compiler/DexEngine` — wraps D8 to turn `.class` files into `classes.dex`.
+- `packaging/ApkBuilder` — orchestrates dex → manifest/resources (via
+  **ARSCLib**, a pure-Java aapt2 replacement) → zip → sign.
+- `packaging/KeystoreManager` — generates and caches a self-signed debug
+  signing key on-device using Bouncy Castle (Android's runtime lacks the
+  JDK's own X.509 cert-builder classes, so plain `java.security` can't do
+  this the way desktop `keytool` does).
+
+## M3 workflow
+1. **Import android.jar** (one-time): tap the toolbar action, pick a file.
+   You need this from an actual Android SDK — e.g.
+   `$ANDROID_HOME/platforms/android-34/android.jar` on a desktop install,
+   or wherever your device's SDK/Termux setup keeps one. Without it,
+   Compile will fail on any `android.app.Activity` reference — the plain
+   JDK classpath ECJ uses by default has no idea what that class is.
+2. **Compile** — as in M2, but now with `android.jar` on the classpath.
+3. **Build APK** — runs Compile first; on success, dexes, packages, and
+   signs. Prompts to install via the system installer (needs "install
+   unknown apps" permission granted to this app, once).
+
+## M3 known limitations
+- No `res/` folder support yet (drawables, layouts, string resources
+  beyond `app_name`) — ARSCLib supports building these, just not wired up.
+  Good M4 candidate.
+- No multi-dex — fine for small sample projects, will break on anything
+  with >64K methods across dependencies.
+- Signing is debug-only (self-signed, on-device generated key) — not
+  suitable for Play Store distribution.
+- `ApkBuilder`'s manifest only declares the main activity — no other
+  components, permissions, or metadata from the source project.
 
 ## M2 notes / known limitations
 - Diagnostics are parsed from ECJ's human-readable console output via
@@ -54,6 +78,7 @@ First launch seeds a `SampleProject` in the app's private storage
 - Kotlin file support isn't wired into Sora Editor yet — only `JavaLanguage()`
   is attached; `.kt` files open as plain text for now.
 
-## Next: M3
-Full dex + resource pipeline: run `d8` over the compiled `.class` files,
-compile resources with `aapt2`, and assemble/sign an installable APK.
+## Next: M4
+Run/install feedback loop: logcat viewer for the installed app, real
+`res/` folder compilation (layouts, drawables, string resources) via
+ARSCLib, and multi-dex support.

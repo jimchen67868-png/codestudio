@@ -1,6 +1,6 @@
 package com.example.aideclone.compiler
 
-import org.eclipse.jdt.internal.compiler.batch.Main
+import org.eclipse.jdt.core.compiler.batch.BatchCompiler
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -8,12 +8,19 @@ import java.io.StringWriter
 /**
  * Compiles every .java file under a project root using ECJ in batch mode.
  *
- * Note on diagnostics: ECJ's simplest embeddable entry point (`Main`) only
- * exposes console text, not structured problem objects — getting real
- * IProblem callbacks means going lower-level into ECJ's Compiler API and
- * supplying a custom ICompilerRequestor, which is a reasonable follow-up
- * but overkill for M2. Instead we regex-parse ECJ's structured console
- * output (it's stable across versions: "N. ERROR in <path> (at line L)").
+ * Uses the public org.eclipse.jdt.core.compiler.batch.BatchCompiler API
+ * rather than the internal org.eclipse.jdt.internal.compiler.batch.Main
+ * class — BatchCompiler is the supported embeddable entry point and its
+ * compile() signature is stable: (String[] args, PrintWriter out,
+ * PrintWriter err, CompilationProgress progress), with progress safely
+ * null when we don't need progress callbacks.
+ *
+ * Note on diagnostics: BatchCompiler only exposes console text, not
+ * structured problem objects — getting real IProblem callbacks means
+ * going lower-level into ECJ's Compiler API and supplying a custom
+ * ICompilerRequestor, which is a reasonable follow-up but overkill for
+ * M2. Instead we regex-parse ECJ's structured console output (it's
+ * stable across versions: "N. ERROR in <path> (at line L)").
  */
 object CompileEngine {
 
@@ -21,7 +28,7 @@ object CompileEngine {
         """^\d+\.\s+(ERROR|WARNING)\s+in\s+(.+?)\s+\(at line (\d+)\)$"""
     )
 
-    fun compileProject(projectRoot: File): CompileResult {
+    fun compileProject(projectRoot: File, classpath: List<File> = emptyList()): CompileResult {
         val sourceFiles = collectJavaFiles(projectRoot)
         if (sourceFiles.isEmpty()) {
             return CompileResult(
@@ -42,18 +49,26 @@ object CompileEngine {
         // -1.8 target/source keeps this compatible with typical Android
         // Java sources; -proceedOnError so one broken file doesn't abort
         // the whole batch (we want a full diagnostics list, not just the
-        // first error).
+        // first error). Classpath entries (e.g. an imported android.jar)
+        // let sources reference Android SDK classes like android.app.Activity.
+        val classpathArgs: Array<String> = if (classpath.isNotEmpty()) {
+            arrayOf("-classpath", classpath.joinToString(File.pathSeparator) { it.absolutePath })
+        } else {
+            emptyArray()
+        }
+
         val args = arrayOf(
             "-1.8",
             "-source", "1.8",
             "-target", "1.8",
             "-d", outputDir.absolutePath,
             "-proceedOnError",
+            *classpathArgs,
             *sourceFiles.map { it.absolutePath }.toTypedArray()
         )
 
         val success = try {
-            Main.compile(args, PrintWriter(outWriter), PrintWriter(errWriter))
+            BatchCompiler.compile(args, PrintWriter(outWriter), PrintWriter(errWriter), null)
         } catch (e: Exception) {
             outWriter.write("\nInternal compiler error: ${e.message}\n")
             false

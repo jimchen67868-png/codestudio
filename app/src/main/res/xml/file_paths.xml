@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Covers filesDir/projects/<project>/build/*.apk, where ApkBuilder
+         writes signed APKs, so they can be shared to the system installer. -->
+    <files-path name="projects" path="projects/" />
+</paths>

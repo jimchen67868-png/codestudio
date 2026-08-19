@@ -1,12 +1,11 @@
 package com.example.aideclone
 
 import java.io.File
+import java.util.Properties
 
 /**
  * Represents a single node in the project file tree: either a source
- * directory or a file. This is intentionally simple for M1 — no build
- * graph, no manifest parsing yet. That comes in M3 when we build the
- * dex/resource pipeline.
+ * directory or a file.
  */
 data class FileNode(
     val file: File,
@@ -19,15 +18,30 @@ data class FileNode(
 /**
  * Wraps a project root directory on disk and knows how to flatten it
  * into a displayable, indent-aware list for the RecyclerView, respecting
- * expand/collapse state per directory.
+ * expand/collapse state per directory. Also carries the small bit of
+ * project metadata (package name, app name) that M3's build pipeline
+ * needs to assemble a manifest — stored in a plain .properties file
+ * rather than anything resembling a real Gradle project model, which is
+ * still out of scope.
  */
 class ProjectModel(val rootDir: File) {
 
     private val expandedDirs = mutableSetOf<String>()
+    private val propsFile = File(rootDir, "project.properties")
+
+    val packageName: String
+    val appName: String
+    val mainActivityClass: String
 
     init {
-        // Root starts expanded so the user sees top-level files immediately.
         expandedDirs.add(rootDir.absolutePath)
+        val props = Properties()
+        if (propsFile.exists()) {
+            propsFile.inputStream().use { props.load(it) }
+        }
+        packageName = props.getProperty("packageName", "com.example.app")
+        appName = props.getProperty("appName", rootDir.name)
+        mainActivityClass = props.getProperty("mainActivityClass", "$packageName.MainActivity")
     }
 
     fun toggleExpand(node: FileNode) {
@@ -61,29 +75,55 @@ class ProjectModel(val rootDir: File) {
 
     companion object {
         /**
-         * Creates a bare-bones project skeleton under [parent]/[name] with a
-         * conventional src/main/java layout. Real Gradle-style templates
-         * (manifest, res/, build config) land in M4; this just gives the
-         * editor something real to open for now.
+         * Creates a project skeleton under [parent]/[name] with a
+         * conventional src/main/java layout and a minimal real
+         * android.app.Activity (needed since M3, so the compiled +
+         * packaged APK is actually launchable — a plain Java class with
+         * main() only made sense back when M1/M2 just compiled to .class
+         * files with nothing to run them).
+         *
+         * Note: compiling this skeleton requires android.jar on the
+         * classpath (see MainActivity's "Import android.jar" action) —
+         * android.app.Activity isn't resolvable against a plain JDK.
          */
         fun createNewProject(parent: File, name: String, packageName: String): ProjectModel {
             val root = File(parent, name)
             val srcDir = File(root, "src/main/java/" + packageName.replace('.', '/'))
             srcDir.mkdirs()
+
+            val mainActivityClass = "$packageName.MainActivity"
             val mainClass = File(srcDir, "MainActivity.java")
             if (!mainClass.exists()) {
                 mainClass.writeText(
                     """
                     package $packageName;
 
-                    public class MainActivity {
-                        public static void main(String[] args) {
-                            System.out.println("Hello from $name");
+                    import android.app.Activity;
+                    import android.os.Bundle;
+                    import android.widget.TextView;
+
+                    public class MainActivity extends Activity {
+                        @Override
+                        protected void onCreate(Bundle savedInstanceState) {
+                            super.onCreate(savedInstanceState);
+                            TextView view = new TextView(this);
+                            view.setText("Hello from $name");
+                            setContentView(view);
                         }
                     }
                     """.trimIndent()
                 )
             }
+
+            val propsFile = File(root, "project.properties")
+            if (!propsFile.exists()) {
+                val props = Properties()
+                props.setProperty("packageName", packageName)
+                props.setProperty("appName", name)
+                props.setProperty("mainActivityClass", mainActivityClass)
+                propsFile.outputStream().use { props.store(it, "AIDEClone project metadata") }
+            }
+
             return ProjectModel(root)
         }
     }

@@ -58,4 +58,19 @@ dependencies {
     // on-device without a JDK. This is the same approach AIDE itself uses
     // (javac isn't available on Android).
     implementation("org.eclipse.jdt:ecj:3.36.0")
+
+    // M3: dex + resource/manifest packaging + signing, all pure-JVM so it
+    // runs on-device with no native binaries required.
+    // D8: the AOSP dexer, turns .class files into classes.dex.
+    implementation("com.android.tools:r8:8.5.10")
+    // ARSCLib: pure-Java replacement for aapt2 — builds resources.arsc and
+    // binary AndroidManifest.xml without needing a native ARM aapt2 binary.
+    implementation("io.github.reandroid:ARSCLib:1.4.0")
+    // apksig: the same library `apksigner` itself is built on; pure Java.
+    implementation("com.android.tools.build:apksig:8.5.2")
+    // Bouncy Castle: generates a self-signed debug cert on-device. Android's
+    // runtime doesn't include the standard JDK's X.509 cert-builder classes,
+    // so we can't use plain java.security for this the way desktop keytool does.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 }

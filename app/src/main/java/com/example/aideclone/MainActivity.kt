@@ -1,6 +1,7 @@
 package com.example.aideclone
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
@@ -8,22 +9,25 @@ import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.aideclone.compiler.CompileDiagnostic
 import com.example.aideclone.compiler.CompileEngine
 import com.example.aideclone.compiler.CompileResultStore
 import com.example.aideclone.compiler.DiagnosticsAdapter
+import com.example.aideclone.packaging.ApkBuilder
 import java.io.File
 import java.util.concurrent.Executors
 
 /**
- * M1/M2 entry point: file/project tree, "Compile" action that runs ECJ
- * over the whole project on a background thread, and a build-output log
- * panel that lists diagnostics and jumps into the editor on tap.
+ * M1/M2/M3 entry point: file/project tree, Compile (ECJ), Build APK
+ * (dex + package + sign, M3), and Install APK, plus the build-output log
+ * panel shared by both Compile and Build.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -35,10 +39,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var diagnosticsRecycler: RecyclerView
     private lateinit var diagnosticsAdapter: DiagnosticsAdapter
 
-    private val compileExecutor = Executors.newSingleThreadExecutor()
+    private val backgroundExecutor = Executors.newSingleThreadExecutor()
+
+    // Where an imported android.jar (needed to compile real Activity
+    // subclasses) is cached. See importAndroidJarLauncher below.
+    private val sdkJarFile: File by lazy { File(filesDir, "sdk/android.jar") }
+
+    private val importAndroidJarLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importAndroidJar(uri)
+        }
 
     companion object {
         private const val MENU_COMPILE = 1
+        private const val MENU_BUILD_APK = 2
+        private const val MENU_IMPORT_SDK = 3
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,40 +94,139 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(0, MENU_COMPILE, 0, "Compile")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        menu.add(0, MENU_BUILD_APK, 1, "Build APK")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
         return super.onCreateOptionsMenu(menu)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == MENU_COMPILE) {
-            runCompile()
-            return true
+        return when (item.itemId) {
+            MENU_COMPILE -> { runCompile { }; true }
+            MENU_BUILD_APK -> { runBuildApk(); true }
+            MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
+            else -> super.onOptionsItemSelected(item)
         }
-        return super.onOptionsItemSelected(item)
     }
 
-    private fun runCompile() {
+    // ---- Compile (M2) ----
+
+    private fun runCompile(onDone: (success: Boolean) -> Unit) {
         val project = projectModel ?: return
         Toast.makeText(this, "Compiling…", Toast.LENGTH_SHORT).show()
 
-        compileExecutor.execute {
-            val result = CompileEngine.compileProject(project.rootDir)
+        val classpath = if (sdkJarFile.exists()) listOf(sdkJarFile) else emptyList()
+        if (classpath.isEmpty()) {
+            Toast.makeText(
+                this,
+                "No android.jar imported yet — Activity classes won't resolve. See Import android.jar.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
+        backgroundExecutor.execute {
+            val result = CompileEngine.compileProject(project.rootDir, classpath)
             CompileResultStore.update(result)
 
             runOnUiThread {
                 diagnosticsAdapter.submitList(result.diagnostics)
                 logPanel.visibility = View.VISIBLE
-                val summary = if (result.success && result.diagnostics.none {
-                        it.severity == CompileDiagnostic.Severity.ERROR
-                    }) {
-                    "Compile succeeded"
-                } else {
-                    val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
-                    "Compile finished with $errorCount error(s)"
-                }
-                Toast.makeText(this, summary, Toast.LENGTH_SHORT).show()
+                val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
+                val success = result.success && errorCount == 0
+                Toast.makeText(
+                    this,
+                    if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
+                    Toast.LENGTH_SHORT
+                ).show()
+                onDone(success)
             }
         }
     }
+
+    // ---- Build APK (M3) ----
+
+    private fun runBuildApk() {
+        runCompile { compileSucceeded ->
+            if (!compileSucceeded) return@runCompile
+            val project = projectModel ?: return@runCompile
+            Toast.makeText(this, "Building APK…", Toast.LENGTH_SHORT).show()
+
+            backgroundExecutor.execute {
+                val signingDir = File(filesDir, "signing")
+                val result = ApkBuilder.build(
+                    projectRoot = project.rootDir,
+                    packageName = project.packageName,
+                    mainActivityClass = project.mainActivityClass,
+                    appName = project.appName,
+                    signingStorageDir = signingDir
+                )
+
+                runOnUiThread {
+                    if (result.success && result.apkFile != null) {
+                        Toast.makeText(this, "APK built: ${result.apkFile.name}", Toast.LENGTH_LONG).show()
+                        promptInstall(result.apkFile)
+                    } else {
+                        Toast.makeText(this, "Build failed — see log", Toast.LENGTH_LONG).show()
+                        showBuildLog(result.log)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showBuildLog(log: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Build Output")
+            .setMessage(log)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun promptInstall(apkFile: File) {
+        AlertDialog.Builder(this)
+            .setTitle("Build succeeded")
+            .setMessage("Install ${apkFile.name}?")
+            .setPositiveButton("Install") { _, _ -> installApk(apkFile) }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    private fun installApk(apkFile: File) {
+        val uri: Uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Couldn't open installer: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // ---- Import android.jar ----
+
+    private fun importAndroidJar(uri: Uri) {
+        Toast.makeText(this, "Importing android.jar…", Toast.LENGTH_SHORT).show()
+        backgroundExecutor.execute {
+            try {
+                sdkJarFile.parentFile?.mkdirs()
+                contentResolver.openInputStream(uri)?.use { input ->
+                    sdkJarFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "android.jar imported (${sdkJarFile.length() / 1024} KB)", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ---- File tree / project management ----
 
     private fun openDiagnostic(diag: CompileDiagnostic) {
         val intent = Intent(this, EditorActivity::class.java)
@@ -169,6 +283,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        compileExecutor.shutdown()
+        backgroundExecutor.shutdown()
     }
 }
