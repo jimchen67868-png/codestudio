@@ -105,9 +105,15 @@ object ApkBuilder {
 
             log.appendLine("Signed APK written: ${signedApk.path}")
             return BuildResult(true, signedApk, log.toString())
-        } catch (e: Exception) {
-            log.appendLine("Build failed: ${e.message}")
-            return BuildResult(false, null, log.toString() + "\n" + e.stackTraceToString())
+        } catch (t: Throwable) {
+            // See CompileEngine's matching comment: D8/ARSCLib running
+            // inside the app process (rather than as a desktop build tool,
+            // which is what they're designed for) can throw Error subtypes
+            // like NoClassDefFoundError, not just Exception. Catching
+            // Throwable here is what turns "the whole app crashes" into
+            // "Build APK shows an error dialog with the real stack trace".
+            log.appendLine("Build failed: ${t}")
+            return BuildResult(false, null, log.toString() + "\n" + t.stackTraceToString())
         }
     }
 }

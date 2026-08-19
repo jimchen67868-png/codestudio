@@ -69,8 +69,13 @@ object CompileEngine {
 
         val success = try {
             BatchCompiler.compile(args, PrintWriter(outWriter), PrintWriter(errWriter), null)
-        } catch (e: Exception) {
-            outWriter.write("\nInternal compiler error: ${e.message}\n")
+        } catch (t: Throwable) {
+            // Deliberately catching Throwable, not just Exception: ECJ
+            // internals (and D8/ARSCLib in ApkBuilder) can throw Error
+            // subtypes like NoClassDefFoundError on-device, which a plain
+            // Exception catch would miss — letting those propagate crashes
+            // the whole host app instead of just failing this compile.
+            outWriter.write("\nInternal compiler error: $t\n${t.stackTraceToString()}\n")
             false
         }
 

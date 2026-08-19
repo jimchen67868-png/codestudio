@@ -125,20 +125,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         backgroundExecutor.execute {
-            val result = CompileEngine.compileProject(project.rootDir, classpath)
-            CompileResultStore.update(result)
+            try {
+                val result = CompileEngine.compileProject(project.rootDir, classpath)
+                CompileResultStore.update(result)
 
-            runOnUiThread {
-                diagnosticsAdapter.submitList(result.diagnostics)
-                logPanel.visibility = View.VISIBLE
-                val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
-                val success = result.success && errorCount == 0
-                Toast.makeText(
-                    this,
-                    if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
-                    Toast.LENGTH_SHORT
-                ).show()
-                onDone(success)
+                runOnUiThread {
+                    diagnosticsAdapter.submitList(result.diagnostics)
+                    logPanel.visibility = View.VISIBLE
+                    val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
+                    val success = result.success && errorCount == 0
+                    Toast.makeText(
+                        this,
+                        if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    onDone(success)
+                }
+            } catch (t: Throwable) {
+                // Belt-and-suspenders: CompileEngine already catches
+                // Throwable internally, but this guards anything outside
+                // it (e.g. CompileResultStore, adapter updates) so a bug
+                // there shows an error dialog instead of crashing the app.
+                runOnUiThread {
+                    showBuildLog("Compile crashed:\n${t.stackTraceToString()}")
+                    onDone(false)
+                }
             }
         }
     }
@@ -152,22 +163,28 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Building APK…", Toast.LENGTH_SHORT).show()
 
             backgroundExecutor.execute {
-                val signingDir = File(filesDir, "signing")
-                val result = ApkBuilder.build(
-                    projectRoot = project.rootDir,
-                    packageName = project.packageName,
-                    mainActivityClass = project.mainActivityClass,
-                    appName = project.appName,
-                    signingStorageDir = signingDir
-                )
+                try {
+                    val signingDir = File(filesDir, "signing")
+                    val result = ApkBuilder.build(
+                        projectRoot = project.rootDir,
+                        packageName = project.packageName,
+                        mainActivityClass = project.mainActivityClass,
+                        appName = project.appName,
+                        signingStorageDir = signingDir
+                    )
 
-                runOnUiThread {
-                    if (result.success && result.apkFile != null) {
-                        Toast.makeText(this, "APK built: ${result.apkFile.name}", Toast.LENGTH_LONG).show()
-                        promptInstall(result.apkFile)
-                    } else {
-                        Toast.makeText(this, "Build failed — see log", Toast.LENGTH_LONG).show()
-                        showBuildLog(result.log)
+                    runOnUiThread {
+                        if (result.success && result.apkFile != null) {
+                            Toast.makeText(this, "APK built: ${result.apkFile.name}", Toast.LENGTH_LONG).show()
+                            promptInstall(result.apkFile)
+                        } else {
+                            Toast.makeText(this, "Build failed — see log", Toast.LENGTH_LONG).show()
+                            showBuildLog(result.log)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    runOnUiThread {
+                        showBuildLog("Build crashed:\n${t.stackTraceToString()}")
                     }
                 }
             }
