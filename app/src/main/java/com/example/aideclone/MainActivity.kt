@@ -113,7 +113,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun runCompile(onDone: (success: Boolean) -> Unit) {
         val project = projectModel ?: return
-        Toast.makeText(this, "Compiling…", Toast.LENGTH_SHORT).show()
 
         val classpath = if (sdkJarFile.exists()) listOf(sdkJarFile) else emptyList()
         if (classpath.isEmpty()) {
@@ -124,12 +123,15 @@ class MainActivity : AppCompatActivity() {
             ).show()
         }
 
+        showProgress("Compiling…")
+
         backgroundExecutor.execute {
             try {
                 val result = CompileEngine.compileProject(project.rootDir, classpath)
                 CompileResultStore.update(result)
 
                 runOnUiThread {
+                    hideProgress()
                     diagnosticsAdapter.submitList(result.diagnostics)
                     logPanel.visibility = View.VISIBLE
                     val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
@@ -147,6 +149,7 @@ class MainActivity : AppCompatActivity() {
                 // it (e.g. CompileResultStore, adapter updates) so a bug
                 // there shows an error dialog instead of crashing the app.
                 runOnUiThread {
+                    hideProgress()
                     showBuildLog("Compile crashed:\n${t.stackTraceToString()}")
                     onDone(false)
                 }
@@ -160,7 +163,8 @@ class MainActivity : AppCompatActivity() {
         runCompile { compileSucceeded ->
             if (!compileSucceeded) return@runCompile
             val project = projectModel ?: return@runCompile
-            Toast.makeText(this, "Building APK…", Toast.LENGTH_SHORT).show()
+
+            showProgress("Building APK (dex + package + sign)…")
 
             backgroundExecutor.execute {
                 try {
@@ -174,6 +178,7 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     runOnUiThread {
+                        hideProgress()
                         if (result.success && result.apkFile != null) {
                             Toast.makeText(this, "APK built: ${result.apkFile.name}", Toast.LENGTH_LONG).show()
                             promptInstall(result.apkFile)
@@ -184,11 +189,28 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (t: Throwable) {
                     runOnUiThread {
+                        hideProgress()
                         showBuildLog("Build crashed:\n${t.stackTraceToString()}")
                     }
                 }
             }
         }
+    }
+
+    private var progressDialog: android.app.ProgressDialog? = null
+
+    private fun showProgress(message: String) {
+        hideProgress()
+        progressDialog = android.app.ProgressDialog(this).apply {
+            setMessage(message)
+            setCancelable(false)
+            show()
+        }
+    }
+
+    private fun hideProgress() {
+        progressDialog?.dismiss()
+        progressDialog = null
     }
 
     private fun showBuildLog(log: String) {
@@ -300,6 +322,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        hideProgress()
         backgroundExecutor.shutdown()
     }
 }
