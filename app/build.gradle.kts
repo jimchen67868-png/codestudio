@@ -32,6 +32,23 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    // Bouncy Castle's several jars (bcprov/bcpkix/bcutil) all ship an
+    // identical META-INF/versions/9/OSGI-INF/MANIFEST.MF path — harmless
+    // duplication, but Gradle's resource merger doesn't like it, so we
+    // just tell it which copies to drop.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt"
+            )
+        }
+    }
 }
 
 dependencies {
