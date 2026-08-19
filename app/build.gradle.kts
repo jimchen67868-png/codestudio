@@ -46,10 +46,13 @@ dependencies {
     // Sora Editor: the code editor engine (syntax highlighting, large-file
     // handling, IME support). This is the same engine several AIDE-alike
     // projects use instead of writing a text engine from scratch.
-    val soraVersion = "0.23.4"
-    implementation("com.github.Rosemoe.sora-editor:editor:$soraVersion")
-    implementation("com.github.Rosemoe.sora-editor:language-java:$soraVersion")
-    implementation("com.github.Rosemoe.sora-editor:language-textmate:$soraVersion")
+    // Note: the library migrated its Maven group from
+    // io.github.Rosemoe.sora-editor to io.github.rosemoe (lowercase) in
+    // mid-2025; the old group no longer resolves.
+    implementation(platform("io.github.rosemoe:editor-bom:0.24.4"))
+    implementation("io.github.rosemoe:editor")
+    implementation("io.github.rosemoe:language-java")
+    implementation("io.github.rosemoe:language-textmate")
 
     // ECJ: Eclipse Compiler for Java, embeddable and pure-Java, so it runs
     // on-device without a JDK. This is the same approach AIDE itself uses

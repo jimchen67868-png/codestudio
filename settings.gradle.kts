@@ -10,8 +10,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // Sora Editor is published via JitPack
-        maven { url = uri("https://jitpack.io") }
     }
 }
 
