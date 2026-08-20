@@ -15,6 +15,16 @@ import java.io.StringWriter
  * PrintWriter err, CompilationProgress progress), with progress safely
  * null when we don't need progress callbacks.
  *
+ * Critical Android-specific detail: ECJ normally auto-detects its boot
+ * classpath by inspecting the *running* JVM (looking for standard JDK
+ * classes like javax.lang.model.SourceVersion). On Android's ART runtime
+ * those classes simply don't exist — ART isn't a desktop JVM — so that
+ * auto-detection throws NoClassDefFoundError before ECJ ever looks at a
+ * source file. The fix is to always pass an explicit -bootclasspath, which
+ * skips the auto-detection path entirely. android.jar is the right value
+ * for it: it's Android's equivalent of rt.jar, defining java.lang.Object,
+ * String, etc. as they exist on-device, not just the app-level APIs.
+ *
  * Note on diagnostics: BatchCompiler only exposes console text, not
  * structured problem objects — getting real IProblem callbacks means
  * going lower-level into ECJ's Compiler API and supplying a custom
@@ -28,7 +38,18 @@ object CompileEngine {
         """^\d+\.\s+(ERROR|WARNING)\s+in\s+(.+?)\s+\(at line (\d+)\)$"""
     )
 
-    fun compileProject(projectRoot: File, classpath: List<File> = emptyList()): CompileResult {
+    fun compileProject(projectRoot: File, androidJar: File?): CompileResult {
+        if (androidJar == null || !androidJar.exists()) {
+            return CompileResult(
+                success = false,
+                diagnostics = emptyList(),
+                rawOutput = "android.jar not imported. It's required as ECJ's " +
+                    "-bootclasspath on Android — without an explicit bootclasspath, " +
+                    "ECJ tries to auto-detect one from the host JVM, which crashes " +
+                    "with NoClassDefFoundError on ART. Use \"Import android.jar\"."
+            )
+        }
+
         val sourceFiles = collectJavaFiles(projectRoot)
         if (sourceFiles.isEmpty()) {
             return CompileResult(
@@ -49,21 +70,15 @@ object CompileEngine {
         // -1.8 target/source keeps this compatible with typical Android
         // Java sources; -proceedOnError so one broken file doesn't abort
         // the whole batch (we want a full diagnostics list, not just the
-        // first error). Classpath entries (e.g. an imported android.jar)
-        // let sources reference Android SDK classes like android.app.Activity.
-        val classpathArgs: Array<String> = if (classpath.isNotEmpty()) {
-            arrayOf("-classpath", classpath.joinToString(File.pathSeparator) { it.absolutePath })
-        } else {
-            emptyArray()
-        }
-
+        // first error). -bootclasspath (not -classpath) is what avoids
+        // ECJ's crash-prone auto-detection — see class doc above.
         val args = arrayOf(
             "-1.8",
             "-source", "1.8",
             "-target", "1.8",
             "-d", outputDir.absolutePath,
             "-proceedOnError",
-            *classpathArgs,
+            "-bootclasspath", androidJar.absolutePath,
             *sourceFiles.map { it.absolutePath }.toTypedArray()
         )
 
@@ -82,7 +97,18 @@ object CompileEngine {
         val rawOutput = outWriter.toString() + errWriter.toString()
         val diagnostics = parseDiagnostics(rawOutput)
 
-        return CompileResult(success = success, diagnostics = diagnostics, rawOutput = rawOutput)
+        // Belt-and-suspenders on top of the parsed diagnostics: if ECJ (or
+        // our own catch block above) wrote an internal-crash marker that
+        // didn't match the structured per-file diagnostic format, don't
+        // report success just because 0 diagnostics were parsed from it.
+        val hasInternalError = rawOutput.contains("Internal compiler error")
+        val outputHasClasses = outputDir.walkTopDown().any { it.isFile && it.extension == "class" }
+
+        return CompileResult(
+            success = success && !hasInternalError && outputHasClasses,
+            diagnostics = diagnostics,
+            rawOutput = rawOutput
+        )
     }
 
     private fun collectJavaFiles(root: File): List<File> {

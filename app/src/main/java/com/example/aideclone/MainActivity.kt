@@ -121,11 +121,11 @@ class MainActivity : AppCompatActivity() {
     private fun runCompile(onDone: (success: Boolean) -> Unit) {
         val project = projectModel ?: return
 
-        val classpath = if (sdkJarFile.exists()) listOf(sdkJarFile) else emptyList()
-        if (classpath.isEmpty()) {
+        val androidJar = if (sdkJarFile.exists()) sdkJarFile else null
+        if (androidJar == null) {
             Toast.makeText(
                 this,
-                "No android.jar imported yet — Activity classes won't resolve. See Import android.jar.",
+                "No android.jar imported yet — see Import android.jar.",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
 
         backgroundExecutor.execute {
             try {
-                val result = CompileEngine.compileProject(project.rootDir, classpath)
+                val result = CompileEngine.compileProject(project.rootDir, androidJar)
                 CompileResultStore.update(result)
 
                 runOnUiThread {
@@ -142,15 +142,12 @@ class MainActivity : AppCompatActivity() {
                     diagnosticsAdapter.submitList(result.diagnostics)
                     logPanel.visibility = View.VISIBLE
                     val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
-                    // Deliberately NOT using result.success (ECJ's raw
-                    // BatchCompiler.compile() return value) here — with
-                    // -proceedOnError set, it seems to report non-success
-                    // completion even on a genuinely clean compile (0
-                    // parsed errors), which silently blocked Build APK
-                    // from ever proceeding. The diagnostics list is the
-                    // real ground truth we already show the user, so
-                    // trust that instead.
-                    val success = errorCount == 0
+                    // CompileEngine.success now checks for internal-crash
+                    // markers and verifies .class files actually landed on
+                    // disk, not just ECJ's raw return code — trustworthy
+                    // again after the -bootclasspath / NoClassDefFoundError
+                    // fix (see CompileEngine's class doc).
+                    val success = result.success
                     Toast.makeText(
                         this,
                         if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
