@@ -26,7 +26,8 @@ object FolderPickerDialog {
     }
 
     private fun showForDir(context: Context, dir: File, title: String, onPicked: (File) -> Unit) {
-        val subdirs = dir.listFiles()
+        val rawList = dir.listFiles()
+        val subdirs = rawList
             ?.filter { it.isDirectory && !it.name.startsWith(".") }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
@@ -37,14 +38,21 @@ object FolderPickerDialog {
             items.add("⬆  ..")
             targets.add(dir.parentFile)
         }
+        if (rawList == null) {
+            // listFiles() returns null (not an empty array) specifically
+            // when the directory can't be read — usually a permission
+            // problem (e.g. browsing outside the app's sandbox without
+            // "All files access" granted in system settings).
+            items.add("⚠️  Can't read this folder (permission denied?)")
+            targets.add(null)
+        }
         for (sub in subdirs) {
             items.add("📁 ${sub.name}")
             targets.add(sub)
         }
 
         AlertDialog.Builder(context)
-            .setTitle(title)
-            .setMessage(dir.absolutePath)
+            .setTitle("$title\n${dir.absolutePath}")
             .setItems(items.toTypedArray()) { _, which ->
                 val target = targets[which]
                 if (target != null) showForDir(context, target, title, onPicked)
