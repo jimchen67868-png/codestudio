@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_COMPILE = 1
         private const val MENU_BUILD_APK = 2
         private const val MENU_IMPORT_SDK = 3
+        private const val MENU_RAW_OUTPUT = 4
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, MENU_BUILD_APK, 1, "Build APK")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
+        menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
         return super.onCreateOptionsMenu(menu)
     }
 
@@ -105,6 +107,11 @@ class MainActivity : AppCompatActivity() {
             MENU_COMPILE -> { runCompile { }; true }
             MENU_BUILD_APK -> { runBuildApk(); true }
             MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
+            MENU_RAW_OUTPUT -> {
+                val raw = CompileResultStore.lastResult?.rawOutput
+                showBuildLog(if (raw.isNullOrBlank()) "No compile run yet, or ECJ produced no console output." else raw)
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }
