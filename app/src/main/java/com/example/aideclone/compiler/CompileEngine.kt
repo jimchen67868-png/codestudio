@@ -78,6 +78,13 @@ object CompileEngine {
             "-target", "1.8",
             "-d", outputDir.absolutePath,
             "-proceedOnError",
+            // We never use annotation processors, but ECJ unconditionally
+            // tries to initialize its APT subsystem unless told not to —
+            // and that touches javax.annotation.processing.*, another
+            // desktop-JDK-only package absent on Android, causing another
+            // NoClassDefFoundError before compilation starts. -proc:none
+            // is the standard javac/ecj flag to skip that entirely.
+            "-proc:none",
             "-bootclasspath", androidJar.absolutePath,
             *sourceFiles.map { it.absolutePath }.toTypedArray()
         )
