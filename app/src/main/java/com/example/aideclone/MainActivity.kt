@@ -135,7 +135,15 @@ class MainActivity : AppCompatActivity() {
                     diagnosticsAdapter.submitList(result.diagnostics)
                     logPanel.visibility = View.VISIBLE
                     val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
-                    val success = result.success && errorCount == 0
+                    // Deliberately NOT using result.success (ECJ's raw
+                    // BatchCompiler.compile() return value) here — with
+                    // -proceedOnError set, it seems to report non-success
+                    // completion even on a genuinely clean compile (0
+                    // parsed errors), which silently blocked Build APK
+                    // from ever proceeding. The diagnostics list is the
+                    // real ground truth we already show the user, so
+                    // trust that instead.
+                    val success = errorCount == 0
                     Toast.makeText(
                         this,
                         if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
