@@ -195,7 +195,8 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this, "APK built: ${result.apkFile.name}", Toast.LENGTH_LONG).show()
                             promptInstall(result.apkFile)
                         } else {
-                            Toast.makeText(this, "Build failed — see log", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, "Build failed — see log (also saved to build/build-log.txt)", Toast.LENGTH_LONG).show()
+                            refreshList()
                             showBuildLog(result.log)
                         }
                     }

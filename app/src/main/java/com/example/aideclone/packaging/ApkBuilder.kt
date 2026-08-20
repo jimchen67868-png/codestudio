@@ -35,19 +35,36 @@ object ApkBuilder {
         signingStorageDir: File
     ): BuildResult {
         val log = StringBuilder()
+        val buildDir = File(projectRoot, "build").apply { mkdirs() }
+        val logFile = File(buildDir, "build-log.txt")
+
+        fun finish(result: BuildResult): BuildResult {
+            // Always write the full log to a real file — much easier to
+            // scroll/select/copy by opening it in the editor than reading
+            // an AlertDialog on a phone screen.
+            try {
+                logFile.writeText(result.log)
+            } catch (_: Exception) {
+                // Non-fatal: the dialog still has the text even if this fails.
+            }
+            return result
+        }
+
         try {
             val classesDir = File(projectRoot, "build/classes")
             if (!classesDir.exists() || classesDir.listFiles().isNullOrEmpty()) {
-                return BuildResult(false, null, "No compiled classes found — run Compile first.")
+                return finish(BuildResult(false, null, "No compiled classes found — run Compile first."))
             }
 
             log.appendLine("Dexing ${classesDir.path} ...")
             val dexOutputDir = File(projectRoot, "build/dex")
-            val dexFile = DexEngine.dex(classesDir, dexOutputDir)
-            if (!dexFile.exists()) {
-                return BuildResult(false, null, log.toString() + "\nDexing failed: no classes.dex produced")
+            val dexResult = DexEngine.dex(classesDir, dexOutputDir)
+            log.append(dexResult.log)
+            if (!dexResult.success || dexResult.dexFile == null) {
+                log.appendLine("Dexing failed — see D8 diagnostics above.")
+                return finish(BuildResult(false, null, log.toString()))
             }
-            log.appendLine("Dex OK: ${dexFile.length()} bytes")
+            log.appendLine("Dex OK: ${dexResult.dexFile.length()} bytes")
 
             val apkModule = ApkModule()
             val tableBlock = TableBlock()
@@ -77,9 +94,8 @@ object ApkBuilder {
             manifest.getOrCreateMainActivity(mainActivityClass)
             log.appendLine("Manifest built for $packageName / $mainActivityClass")
 
-            apkModule.add(ByteInputSource(dexFile.readBytes(), "classes.dex"))
+            apkModule.add(ByteInputSource(dexResult.dexFile.readBytes(), "classes.dex"))
 
-            val buildDir = File(projectRoot, "build").apply { mkdirs() }
             val unsignedApk = File(buildDir, "$packageName-unsigned.apk")
             if (unsignedApk.exists()) unsignedApk.delete()
             apkModule.writeApk(unsignedApk)
@@ -104,7 +120,7 @@ object ApkBuilder {
                 .sign()
 
             log.appendLine("Signed APK written: ${signedApk.path}")
-            return BuildResult(true, signedApk, log.toString())
+            return finish(BuildResult(true, signedApk, log.toString()))
         } catch (t: Throwable) {
             // See CompileEngine's matching comment: D8/ARSCLib running
             // inside the app process (rather than as a desktop build tool,
@@ -113,7 +129,8 @@ object ApkBuilder {
             // Throwable here is what turns "the whole app crashes" into
             // "Build APK shows an error dialog with the real stack trace".
             log.appendLine("Build failed: ${t}")
-            return BuildResult(false, null, log.toString() + "\n" + t.stackTraceToString())
+            log.appendLine(t.stackTraceToString())
+            return finish(BuildResult(false, null, log.toString()))
         }
     }
 }
