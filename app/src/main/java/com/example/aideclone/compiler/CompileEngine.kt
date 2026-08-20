@@ -67,6 +67,17 @@ object CompileEngine {
         val outWriter = StringWriter()
         val errWriter = StringWriter()
 
+        // Diagnostic preamble: confirms exactly what this run believes
+        // about the bootclasspath file, so a bad import (wrong path,
+        // truncated copy, unreadable file) is visible directly in the
+        // Build Output instead of needing to guess from ECJ's downstream
+        // "cannot be resolved" errors.
+        outWriter.write(
+            "androidJar path: ${androidJar.absolutePath}\n" +
+                "  exists=${androidJar.exists()} canRead=${androidJar.canRead()} " +
+                "length=${androidJar.length()} bytes\n\n"
+        )
+
         // -1.8 target/source keeps this compatible with typical Android
         // Java sources; -proceedOnError so one broken file doesn't abort
         // the whole batch (we want a full diagnostics list, not just the
@@ -78,6 +89,7 @@ object CompileEngine {
             "-target", "1.8",
             "-d", outputDir.absolutePath,
             "-proceedOnError",
+            "-verbose",
             // We never use annotation processors, but ECJ unconditionally
             // tries to initialize its APT subsystem unless told not to —
             // and that touches javax.annotation.processing.*, another
