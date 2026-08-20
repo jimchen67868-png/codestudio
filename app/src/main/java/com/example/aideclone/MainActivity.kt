@@ -50,11 +50,15 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) importAndroidJar(uri)
         }
 
+    private val prefs by lazy { getSharedPreferences("aideclone", MODE_PRIVATE) }
+
     companion object {
         private const val MENU_COMPILE = 1
         private const val MENU_BUILD_APK = 2
         private const val MENU_IMPORT_SDK = 3
         private const val MENU_RAW_OUTPUT = 4
+        private const val MENU_OPEN_PROJECT = 5
+        private const val PREF_LAST_PROJECT_PATH = "last_project_path"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,10 +90,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         val defaultProjectsDir = File(filesDir, "projects").apply { mkdirs() }
-        if (defaultProjectsDir.listFiles().isNullOrEmpty()) {
+        val sampleProjectDir = File(defaultProjectsDir, "SampleProject")
+        if (!sampleProjectDir.exists()) {
             ProjectModel.createNewProject(defaultProjectsDir, "SampleProject", "com.example.sample")
         }
-        loadProject(defaultProjectsDir)
+
+        // Reopen whatever project was last open, if it still exists —
+        // otherwise fall back to the bundled sample project.
+        val lastPath = prefs.getString(PREF_LAST_PROJECT_PATH, null)
+        val startDir = if (lastPath != null && File(lastPath).isDirectory) File(lastPath) else sampleProjectDir
+        loadProject(startDir)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -99,6 +109,7 @@ class MainActivity : AppCompatActivity() {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
+        menu.add(0, MENU_OPEN_PROJECT, 4, "Open Project")
         return super.onCreateOptionsMenu(menu)
     }
 
@@ -110,6 +121,14 @@ class MainActivity : AppCompatActivity() {
             MENU_RAW_OUTPUT -> {
                 val raw = CompileResultStore.lastResult?.rawOutput
                 showBuildLog(if (raw.isNullOrBlank()) "No compile run yet, or ECJ produced no console output." else raw)
+                true
+            }
+            MENU_OPEN_PROJECT -> {
+                val start = projectModel?.rootDir?.parentFile ?: android.os.Environment.getExternalStorageDirectory()
+                FolderPickerDialog.show(this, start, "Open Project") { picked ->
+                    loadProject(picked)
+                    Toast.makeText(this, "Opened ${picked.name}", Toast.LENGTH_SHORT).show()
+                }
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -289,6 +308,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadProject(dir: File) {
         projectModel = ProjectModel(dir)
+        prefs.edit().putString(PREF_LAST_PROJECT_PATH, dir.absolutePath).apply()
         refreshList()
     }
 
@@ -318,16 +338,18 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("New Project")
             .setView(container)
-            .setPositiveButton("Create") { _, _ ->
+            .setPositiveButton("Choose Location…") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isEmpty()) {
                     Toast.makeText(this, "Project name required", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                val projectsDir = File(filesDir, "projects")
-                val pkg = "com.example." + name.lowercase().replace(Regex("[^a-z0-9]"), "")
-                val model = ProjectModel.createNewProject(projectsDir, name, pkg)
-                loadProject(model.rootDir)
+                val defaultParent = File(filesDir, "projects")
+                FolderPickerDialog.show(this, defaultParent, "Save New Project In") { parentDir ->
+                    val pkg = "com.example." + name.lowercase().replace(Regex("[^a-z0-9]"), "")
+                    val model = ProjectModel.createNewProject(parentDir, name, pkg)
+                    loadProject(model.rootDir)
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
