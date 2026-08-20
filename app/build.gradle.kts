@@ -22,7 +22,7 @@ android {
     // already installed. That silent "App not installed" failure (easy to
     // miss/dismiss) is what made it look like builds weren't taking effect.
     signingConfigs {
-        create("debug") {
+        getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "aideclone123"
             keyAlias = "aideclone-debug"
