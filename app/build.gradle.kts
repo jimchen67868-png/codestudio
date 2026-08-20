@@ -12,12 +12,30 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1-M1"
+        versionName = "0.1-M3"
+    }
+
+    // Fixed debug signing key, checked into the repo. Without this, AGP
+    // auto-generates a random debug.keystore per machine/CI run, so every
+    // GitHub Actions build gets a DIFFERENT signature — and Android
+    // refuses to install an update whose signature doesn't match what's
+    // already installed. That silent "App not installed" failure (easy to
+    // miss/dismiss) is what made it look like builds weren't taking effect.
+    signingConfigs {
+        create("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "aideclone123"
+            keyAlias = "aideclone-debug"
+            keyPassword = "aideclone123"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
