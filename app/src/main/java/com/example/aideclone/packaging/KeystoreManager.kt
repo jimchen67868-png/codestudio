@@ -33,7 +33,18 @@ object KeystoreManager {
 
     private fun ensureProvider() {
         if (!providerRegistered) {
-            Security.addProvider(BouncyCastleProvider())
+            // Android ships its own restricted, built-in "BC" provider.
+            // Security.addProvider() silently loses to it (same name, and
+            // Android won't let an added provider outrank a system one at
+            // its existing position) — algorithm lookups like SHA256withRSA
+            // then resolve against Android's crippled version instead of
+            // our full bcprov-jdk18on one, causing
+            // NoSuchAlgorithmException even though the real BC classes are
+            // right there on the classpath. Removing the system one and
+            // inserting ours at the top priority position is the standard,
+            // well-documented fix for this on Android.
+            Security.removeProvider("BC")
+            Security.insertProviderAt(BouncyCastleProvider(), 1)
             providerRegistered = true
         }
     }
