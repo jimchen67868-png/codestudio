@@ -16,6 +16,11 @@ data class DexResult(val dexFile: File?, val log: String, val success: Boolean)
  * D8's public API is pure Kotlin/Java, so — unlike aapt2 — it runs
  * on-device with no native binary needed.
  *
+ * Gotcha: addProgramFiles() takes individual .class/.jar file paths, not
+ * a directory — passing a directory throws "Unsupported source file
+ * type" with no indication that's the actual problem. This walks the
+ * directory itself and passes the resulting file list instead.
+ *
  * D8 doesn't print diagnostics to a PrintWriter the way ECJ does — it
  * reports them through a DiagnosticsHandler callback. Without supplying
  * one, a failure only surfaces as a generic
@@ -42,8 +47,18 @@ object DexEngine {
         }
 
         return try {
+            val classFiles = classesDir.walkTopDown()
+                .filter { it.isFile && it.extension == "class" }
+                .map { it.toPath() }
+                .toList()
+
+            if (classFiles.isEmpty()) {
+                log.appendLine("No .class files found under ${classesDir.path}")
+                return DexResult(dexFile = null, log = log.toString(), success = false)
+            }
+
             val command = D8Command.builder(handler)
-                .addProgramFiles(classesDir.toPath())
+                .addProgramFiles(classFiles)
                 .setOutput(outputDir.toPath(), OutputMode.DexIndexed)
                 .setMinApiLevel(minApiLevel)
                 .setMode(CompilationMode.DEBUG)
