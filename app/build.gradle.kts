@@ -108,4 +108,35 @@ dependencies {
     // so we can't use plain java.security for this the way desktop keytool does.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
+    // Kotlin compiler, embeddable variant (a relocated/shaded build meant
+    // for exactly this — invoking it programmatically from another JVM
+    // tool, which is also how Maven/Ant's Kotlin plugins work without
+    // Gradle's daemon). Much larger and more complex than ECJ; expect
+    // similar on-device compatibility issues to what ECJ needed fixed,
+    // likely more of them given its size.
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20")
+}
+
+// The embedded Kotlin compiler needs kotlin-stdlib.jar as an explicit
+// classpath entry when compiling user Kotlin source (compiling against
+// android.jar alone isn't enough — Kotlin code always implicitly
+// references kotlin.* runtime classes). Our own app's kotlin-stdlib gets
+// merged into classes.dex at build time, which isn't usable as a
+// classpath entry for an external tool expecting real .class-in-jar
+// content — so we bundle a standalone copy as an asset instead.
+val kotlinStdlibBundle: Configuration by configurations.creating
+
+dependencies {
+    kotlinStdlibBundle("org.jetbrains.kotlin:kotlin-stdlib:2.2.20")
+}
+
+tasks.register<Copy>("bundleKotlinStdlib") {
+    from(kotlinStdlibBundle) { include("kotlin-stdlib-*.jar") }
+    into("src/main/assets")
+    rename { "kotlin-stdlib.jar" }
+}
+
+tasks.named("preBuild") {
+    dependsOn("bundleKotlinStdlib")
 }

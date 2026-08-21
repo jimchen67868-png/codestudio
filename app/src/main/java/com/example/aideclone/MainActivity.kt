@@ -20,6 +20,7 @@ import com.example.aideclone.compiler.CompileDiagnostic
 import com.example.aideclone.compiler.CompileEngine
 import com.example.aideclone.compiler.CompileResultStore
 import com.example.aideclone.compiler.DiagnosticsAdapter
+import com.example.aideclone.compiler.KotlinCompileEngine
 import com.example.aideclone.packaging.ApkBuilder
 import java.io.File
 import java.util.concurrent.Executors
@@ -44,6 +45,22 @@ class MainActivity : AppCompatActivity() {
     // Where an imported android.jar (needed to compile real Activity
     // subclasses) is cached. See importAndroidJarLauncher below.
     private val sdkJarFile: File by lazy { File(filesDir, "sdk/android.jar") }
+
+    // Bundled at build time (see app/build.gradle.kts' bundleKotlinStdlib
+    // task) as an asset, extracted to a real file here on first use since
+    // the Kotlin compiler needs an actual classpath-usable jar, not an
+    // APK-internal asset stream.
+    private val kotlinStdlibFile: File by lazy { File(filesDir, "sdk/kotlin-stdlib.jar") }
+
+    private fun ensureKotlinStdlib(): File {
+        if (!kotlinStdlibFile.exists()) {
+            kotlinStdlibFile.parentFile?.mkdirs()
+            assets.open("kotlin-stdlib.jar").use { input ->
+                kotlinStdlibFile.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+        return kotlinStdlibFile
+    }
 
     private val importAndroidJarLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -153,7 +170,20 @@ class MainActivity : AppCompatActivity() {
 
         backgroundExecutor.execute {
             try {
-                val result = CompileEngine.compileProject(project.rootDir, androidJar)
+                // Language detection: route to the Kotlin compiler if the
+                // project has any .kt files, otherwise ECJ (Java). Mixed
+                // Java+Kotlin projects aren't supported yet — that needs a
+                // proper kapt-style stub-generation pipeline, out of scope
+                // for now.
+                val hasKotlin = project.rootDir.walkTopDown()
+                    .any { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
+
+                val result = if (hasKotlin) {
+                    val stdlib = ensureKotlinStdlib()
+                    KotlinCompileEngine.compileProject(project.rootDir, androidJar, stdlib)
+                } else {
+                    CompileEngine.compileProject(project.rootDir, androidJar)
+                }
                 CompileResultStore.update(result)
 
                 runOnUiThread {
