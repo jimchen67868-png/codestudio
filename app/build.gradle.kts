@@ -9,7 +9,14 @@ android {
 
     defaultConfig {
         applicationId = "com.example.aideclone"
-        minSdk = 24
+        // 26, not 24: kotlin-compiler-embeddable bundles IntelliJ platform
+        // code that uses java.lang.invoke.MethodHandle.invoke/invokeExact
+        // directly. D8 can't dex those calls below API 26 — this isn't a
+        // desugaring gap that can be worked around, ART itself needs to
+        // support MethodHandle natively. This only raises the floor for
+        // running AIDEClone itself; it's independent of the minSdk set
+        // for whatever projects it builds (still 24, see ApkBuilder).
+        minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "0.1-M3"
