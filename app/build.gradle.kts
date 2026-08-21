@@ -61,7 +61,12 @@ android {
     // Bouncy Castle's several jars (bcprov/bcpkix/bcutil) all ship an
     // identical META-INF/versions/9/OSGI-INF/MANIFEST.MF path — harmless
     // duplication, but Gradle's resource merger doesn't like it, so we
-    // just tell it which copies to drop.
+    // just tell it which copies to drop. Similarly, kotlin-compiler-
+    // embeddable bundles its own copy of Kotlin's built-in metadata
+    // (*.kotlin_builtins), which duplicates our own kotlin-stdlib
+    // dependency's copies — wildcarded since there are many individual
+    // files (kotlin.kotlin_builtins, coroutines, ranges, text, etc.) and
+    // they'd otherwise surface one CI failure at a time.
     packaging {
         resources {
             excludes += setOf(
@@ -70,7 +75,9 @@ android {
                 "META-INF/LICENSE",
                 "META-INF/LICENSE.txt",
                 "META-INF/NOTICE",
-                "META-INF/NOTICE.txt"
+                "META-INF/NOTICE.txt",
+                "**/*.kotlin_builtins",
+                "**/*.kotlin_module"
             )
         }
     }
