@@ -43,6 +43,18 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            // Critical: a "debuggable" build type silently skips REAL R8
+            // shrinking/optimization/obfuscation no matter what
+            // isMinifyEnabled says — confirmed by AGP's own build warning
+            // ("Debuggable builds are no longer name minified and all
+            // code optimizations and obfuscation will be disabled").
+            // Without this, minifyEnabled=true below does essentially
+            // nothing — R8 runs but as an inert pass-through, and none
+            // of kotlin-compiler-embeddable's unreachable code actually
+            // gets stripped. We still call this build type "debug" (same
+            // CI command, same signing config, same output path) — this
+            // only turns off the debuggable flag specifically.
+            isDebuggable = false
             // Experiment: shrink kotlin-compiler-embeddable's unreachable
             // IntelliJ-platform code, both to reduce dex/method-count
             // bloat and because the specific code pattern R8 strips
