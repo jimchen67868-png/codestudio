@@ -43,6 +43,18 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            // Experiment: shrink kotlin-compiler-embeddable's unreachable
+            // IntelliJ-platform code, both to reduce dex/method-count
+            // bloat and because the specific code pattern R8 strips
+            // (reflection-heavy custom classloaders) is what's triggering
+            // a heuristic antivirus false positive. Genuinely untested —
+            // proguard-rules.pro keeps every OTHER complex/reflective
+            // library fully intact and only lets this one actually shrink.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
