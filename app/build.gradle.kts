@@ -82,6 +82,18 @@ android {
         viewBinding = true
     }
 
+    // isDebuggable=false (needed for real R8 shrinking, see buildTypes
+    // below) also activates AGP's "lint vital" check, normally skipped
+    // for debuggable builds. That check's own bundled Kotlin metadata
+    // reader is older than our Kotlin 2.2.x dependencies and fails
+    // parsing them — a different component than our project's own Kotlin
+    // plugin version, not fixable the same way. We don't need Play
+    // Store-style lint enforcement for a personal sideloaded app anyway.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     // Bouncy Castle's several jars (bcprov/bcpkix/bcutil) all ship an
     // identical META-INF/versions/9/OSGI-INF/MANIFEST.MF path — harmless
     // duplication, but Gradle's resource merger doesn't like it, so we
