@@ -74,45 +74,81 @@ class ProjectModel(val rootDir: File) {
     }
 
     companion object {
+        enum class Language { JAVA, KOTLIN }
+
         /**
          * Creates a project skeleton under [parent]/[name] with a
          * conventional src/main/java layout and a minimal real
          * android.app.Activity (needed since M3, so the compiled +
-         * packaged APK is actually launchable — a plain Java class with
-         * main() only made sense back when M1/M2 just compiled to .class
-         * files with nothing to run them).
+         * packaged APK is actually launchable), in either Java or
+         * Kotlin depending on [language].
          *
          * Note: compiling this skeleton requires android.jar on the
-         * classpath (see MainActivity's "Import android.jar" action) —
-         * android.app.Activity isn't resolvable against a plain JDK.
+         * classpath (see MainActivity's "Import android.jar" action)
+         * regardless of language — android.app.Activity isn't
+         * resolvable against a plain JDK, and that's just as true for
+         * Kotlin compilation (KotlinCompileEngine) as it is for ECJ.
          */
-        fun createNewProject(parent: File, name: String, packageName: String): ProjectModel {
+        fun createNewProject(
+            parent: File,
+            name: String,
+            packageName: String,
+            language: Language = Language.JAVA
+        ): ProjectModel {
             val root = File(parent, name)
             val srcDir = File(root, "src/main/java/" + packageName.replace('.', '/'))
             srcDir.mkdirs()
 
             val mainActivityClass = "$packageName.MainActivity"
-            val mainClass = File(srcDir, "MainActivity.java")
-            if (!mainClass.exists()) {
-                mainClass.writeText(
-                    """
-                    package $packageName;
 
-                    import android.app.Activity;
-                    import android.os.Bundle;
-                    import android.widget.TextView;
+            when (language) {
+                Language.JAVA -> {
+                    val mainClass = File(srcDir, "MainActivity.java")
+                    if (!mainClass.exists()) {
+                        mainClass.writeText(
+                            """
+                            package $packageName;
 
-                    public class MainActivity extends Activity {
-                        @Override
-                        protected void onCreate(Bundle savedInstanceState) {
-                            super.onCreate(savedInstanceState);
-                            TextView view = new TextView(this);
-                            view.setText("Hello from $name");
-                            setContentView(view);
-                        }
+                            import android.app.Activity;
+                            import android.os.Bundle;
+                            import android.widget.TextView;
+
+                            public class MainActivity extends Activity {
+                                @Override
+                                protected void onCreate(Bundle savedInstanceState) {
+                                    super.onCreate(savedInstanceState);
+                                    TextView view = new TextView(this);
+                                    view.setText("Hello from $name");
+                                    setContentView(view);
+                                }
+                            }
+                            """.trimIndent()
+                        )
                     }
-                    """.trimIndent()
-                )
+                }
+                Language.KOTLIN -> {
+                    val mainClass = File(srcDir, "MainActivity.kt")
+                    if (!mainClass.exists()) {
+                        mainClass.writeText(
+                            """
+                            package $packageName
+
+                            import android.app.Activity
+                            import android.os.Bundle
+                            import android.widget.TextView
+
+                            class MainActivity : Activity() {
+                                override fun onCreate(savedInstanceState: Bundle?) {
+                                    super.onCreate(savedInstanceState)
+                                    val view = TextView(this)
+                                    view.text = "Hello from $name"
+                                    setContentView(view)
+                                }
+                            }
+                            """.trimIndent()
+                        )
+                    }
+                }
             }
 
             val propsFile = File(root, "project.properties")

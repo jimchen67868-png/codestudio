@@ -360,10 +360,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun promptNewProject() {
         val input = EditText(this).apply { hint = "ProjectName" }
+        val languageGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            addView(android.widget.RadioButton(this@MainActivity).apply {
+                text = "Java"
+                id = View.generateViewId()
+                isChecked = true
+            })
+            addView(android.widget.RadioButton(this@MainActivity).apply {
+                text = "Kotlin"
+                id = View.generateViewId()
+            })
+        }
+        val kotlinRadioId = languageGroup.getChildAt(1).id
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 24, 48, 0)
             addView(input)
+            addView(languageGroup)
         }
         AlertDialog.Builder(this)
             .setTitle("New Project")
@@ -374,10 +389,15 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Project name required", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
+                val language = if (languageGroup.checkedRadioButtonId == kotlinRadioId) {
+                    ProjectModel.Companion.Language.KOTLIN
+                } else {
+                    ProjectModel.Companion.Language.JAVA
+                }
                 val defaultParent = File(filesDir, "projects")
                 FolderPickerDialog.show(this, defaultParent, "Save New Project In") { parentDir ->
                     val pkg = "com.example." + name.lowercase().replace(Regex("[^a-z0-9]"), "")
-                    val model = ProjectModel.createNewProject(parentDir, name, pkg)
+                    val model = ProjectModel.createNewProject(parentDir, name, pkg, language)
                     loadProject(model.rootDir)
                 }
             }
