@@ -43,25 +43,6 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
-            // isDebuggable=false is required for R8 to actually shrink
-            // anything (a debuggable build silently skips real
-            // optimization regardless of isMinifyEnabled — see earlier
-            // commit history).
-            isDebuggable = false
-            isMinifyEnabled = true
-            // proguard-android.txt (NOT the "-optimize" variant): the
-            // first attempt used proguard-android-optimize.txt and
-            // crashed the app on launch with zero diagnostic visibility.
-            // The plain (non-optimize) file still shrinks unreachable
-            // code and obfuscates names, but skips the extra aggressive
-            // bytecode-level inlining/optimization passes that are far
-            // more likely to introduce subtle correctness bugs — the
-            // standard first troubleshooting step for exactly this
-            // failure mode.
-            proguardFiles(
-                getDefaultProguardFile("proguard-android.txt"),
-                "proguard-rules.pro"
-            )
         }
     }
 
