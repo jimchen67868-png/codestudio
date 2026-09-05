@@ -141,7 +141,7 @@ dependencies {
     // Gradle's daemon). Much larger and more complex than ECJ; expect
     // similar on-device compatibility issues to what ECJ needed fixed,
     // likely more of them given its size.
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
 }
 
 // The embedded Kotlin compiler needs kotlin-stdlib.jar as an explicit
@@ -154,7 +154,7 @@ dependencies {
 val kotlinStdlibBundle: Configuration by configurations.creating
 
 dependencies {
-    kotlinStdlibBundle("org.jetbrains.kotlin:kotlin-stdlib:2.2.20")
+    kotlinStdlibBundle("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
 }
 
 tasks.register<Copy>("bundleKotlinStdlib") {
