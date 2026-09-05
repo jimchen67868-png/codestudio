@@ -228,10 +228,23 @@ class MainActivity : AppCompatActivity() {
                 }
                 CompileResultStore.update(result)
 
+                // Full raw output to a real file — same reasoning as
+                // ApkBuilder's build-log.txt: an AlertDialog is awkward to
+                // scroll/select/copy on a phone, especially for long
+                // multi-"Caused by:" stack traces. Opening this in the
+                // editor lets you actually read and copy the whole thing.
+                try {
+                    File(project.rootDir, "build").mkdirs()
+                    File(project.rootDir, "build/compile-log.txt").writeText(result.rawOutput)
+                } catch (_: Exception) {
+                    // Non-fatal: the dialog still shows the text either way.
+                }
+
                 runOnUiThread {
                     hideProgress()
                     diagnosticsAdapter.submitList(result.diagnostics)
                     logPanel.visibility = View.VISIBLE
+                    refreshList()
                     val errorCount = result.diagnostics.count { it.severity == CompileDiagnostic.Severity.ERROR }
                     // CompileEngine.success now checks for internal-crash
                     // markers and verifies .class files actually landed on
@@ -241,8 +254,8 @@ class MainActivity : AppCompatActivity() {
                     val success = result.success
                     Toast.makeText(
                         this,
-                        if (success) "Compile succeeded" else "Compile finished with $errorCount error(s)",
-                        Toast.LENGTH_SHORT
+                        if (success) "Compile succeeded" else "Compile finished with $errorCount error(s) — full log at build/compile-log.txt",
+                        Toast.LENGTH_LONG
                     ).show()
                     onDone(success)
                 }
