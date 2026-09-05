@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_IMPORT_SDK = 3
         private const val MENU_RAW_OUTPUT = 4
         private const val MENU_OPEN_PROJECT = 5
+        private const val MENU_STORAGE_PERMISSION = 6
         private const val PREF_LAST_PROJECT_PATH = "last_project_path"
     }
 
@@ -127,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
         menu.add(0, MENU_OPEN_PROJECT, 4, "Open Project")
+        menu.add(0, MENU_STORAGE_PERMISSION, 5, "Grant Storage Access")
         return super.onCreateOptionsMenu(menu)
     }
 
@@ -148,7 +150,47 @@ class MainActivity : AppCompatActivity() {
                 }
                 true
             }
+            MENU_STORAGE_PERMISSION -> {
+                requestStorageAccess()
+                true
+            }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun requestStorageAccess() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            // "All files access" is a special app-level setting, not a
+            // normal runtime permission — it doesn't show up on the
+            // app's own Permissions page on most Android skins. This
+            // intent jumps straight to the correct toggle for this
+            // specific app, sidestepping OEM navigation differences.
+            if (!android.os.Environment.isExternalStorageManager()) {
+                try {
+                    val intent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // Some OEMs don't support the per-app variant of this
+                    // intent — fall back to the general all-files-access
+                    // list, where the user picks AIDEClone manually.
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                }
+            } else {
+                Toast.makeText(this, "Already granted", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            // Pre-API 30: legacy runtime storage permissions instead.
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ),
+                1001
+            )
         }
     }
 
