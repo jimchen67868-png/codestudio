@@ -12,6 +12,25 @@
 # stack traces if something goes wrong. ---
 -keep class com.example.aideclone.** { *; }
 
+# --- AndroidX AppCompat: a known, documented R8 obfuscation issue.
+# AppCompat's LayoutInflater.Factory2 implementation
+# (AppCompatDelegateImpl) gets its interface/impl linkage broken by
+# renaming, causing AbstractMethodError on onCreateView at the exact
+# point setContentView() first inflates a layout — this is the actual
+# crash we hit and diagnosed via a real adb-readable crash log. ---
+-keep class androidx.appcompat.** { *; }
+-keep interface androidx.appcompat.** { *; }
+-dontwarn androidx.appcompat.**
+
+# Broader safety net: the same interface/impl obfuscation pattern that
+# broke AppCompat could plausibly hit other AndroidX components we use
+# (RecyclerView, ConstraintLayout, CoordinatorLayout, DrawerLayout) —
+# keeping all of androidx is a small size cost, not worth risking another
+# blind-crash round trip over.
+-keep class androidx.** { *; }
+-keep interface androidx.** { *; }
+-dontwarn androidx.**
+
 # --- ECJ (Java compiler): complex internal wiring, not what we're
 # trying to shrink. Keep fully. ---
 -keep class org.eclipse.jdt.** { *; }

@@ -43,6 +43,17 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            isMinifyEnabled = true
+            // Milder (non-optimize) preset — see proguard-rules.pro for
+            // the specific androidx.appcompat keep rule added after
+            // diagnosing the actual crash (AbstractMethodError on
+            // AppCompat's Factory2 impl) via a real adb-readable
+            // crash_log.txt. Not a blind retry this time.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
