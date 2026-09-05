@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
+        android:name=".AIDECloneApplication"
         android:allowBackup="true"
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="AIDEClone"
