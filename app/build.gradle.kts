@@ -50,9 +50,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // kotlinOptions { jvmTarget = "17" } is now a hard error under Kotlin
+    // 2.4.10 (was just a deprecation warning earlier this session) —
+    // migrated to the new compilerOptions DSL, set via the top-level
+    // `kotlin { }` extension block below instead.
 
     buildFeatures {
         viewBinding = true
@@ -92,6 +93,12 @@ android {
                 "**/*.kotlin_module"
             )
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
