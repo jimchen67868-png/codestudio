@@ -55,6 +55,13 @@
 -dontwarn com.intellij.**
 -dontwarn org.jetbrains.org.objectweb.asm.**
 -dontwarn com.google.protobuf.**
+# JetBrains' own annotation library (@NotNull, @ApiStatus.Obsolete, etc.)
+# — tooling-only markers, never actually invoked at runtime, but R8's
+# static analysis still wants to resolve every referenced class. Expect
+# to add more -dontwarn rules like this iteratively: R8 tends to report
+# missing optional/compile-time-only classes one at a time rather than
+# all at once.
+-dontwarn org.jetbrains.annotations.**
 
 # General Android keep rules AGP already applies by default for
 # manifest-declared components (activities, providers, etc.) — no need
