@@ -80,6 +80,17 @@ object KotlinCompileEngine {
             "-cp", classpath,
             "-d", outputDir.absolutePath,
             "-no-stdlib",
+            // Bypasses PathUtil.getKotlinPathsForCompiler()'s
+            // auto-detection, which tries to locate its own .class file
+            // as a browsable resource via getResource() to figure out
+            // "where am I installed" — a trick that works for desktop
+            // JAR-based classloading but has no equivalent on Android's
+            // DEX-based classloading (individual classes aren't
+            // browsable resources there at all), causing
+            // "IllegalStateException: Resource not found". We don't need
+            // real auto-discovery since we supply our own classpath
+            // explicitly via -cp — any existing directory satisfies this.
+            "-kotlin-home", androidJar.parentFile!!.absolutePath,
             "-no-reflect",
             "-jvm-target", "1.8",
             *sourceFiles.map { it.absolutePath }.toTypedArray()
