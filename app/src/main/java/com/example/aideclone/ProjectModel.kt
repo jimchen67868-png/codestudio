@@ -36,8 +36,18 @@ class ProjectModel(val rootDir: File) {
     init {
         expandedDirs.add(rootDir.absolutePath)
         val props = Properties()
-        if (propsFile.exists()) {
-            propsFile.inputStream().use { props.load(it) }
+        // exists() can report true (based on directory-listing metadata)
+        // even when actually OPENING the file fails — e.g. reading into
+        // shared storage without "All files access" granted throws
+        // FileNotFoundException/EACCES despite exists() saying yes. Any
+        // read failure here should fall back to defaults, not crash the
+        // whole app — this used to be unguarded and did exactly that.
+        try {
+            if (propsFile.exists()) {
+                propsFile.inputStream().use { props.load(it) }
+            }
+        } catch (_: Exception) {
+            // Fall through with an empty Properties — defaults below apply.
         }
         packageName = props.getProperty("packageName", "com.example.app")
         appName = props.getProperty("appName", rootDir.name)
