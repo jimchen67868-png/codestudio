@@ -80,6 +80,13 @@ object KotlinCompileEngine {
             "-cp", classpath,
             "-d", outputDir.absolutePath,
             "-no-stdlib",
+            // Skips JDK auto-detection ("no class roots found in the JDK
+            // path: /apex/com.android.art") — the compiler tries to
+            // locate a real JDK via java.home, which on Android points
+            // to ART's own runtime module, not anything JDK-shaped. We
+            // don't need this since android.jar (passed via -cp above)
+            // already covers java.lang.* etc. for Android's runtime.
+            "-no-jdk",
             // Bypasses PathUtil.getKotlinPathsForCompiler()'s
             // auto-detection, which tries to locate its own .class file
             // as a browsable resource via getResource() to figure out
