@@ -331,10 +331,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBuildLog(log: String) {
+        val textView = android.widget.TextView(this).apply {
+            text = log
+            setTextIsSelectable(true)
+            setPadding(48, 32, 48, 32)
+            textSize = 13f
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val scrollView = android.widget.ScrollView(this).apply {
+            addView(textView)
+        }
         AlertDialog.Builder(this)
             .setTitle("Build Output")
-            .setMessage(log)
+            .setView(scrollView)
             .setPositiveButton("OK", null)
+            .setNeutralButton("Copy") { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Build Output", log))
+                Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
             .show()
     }
 
