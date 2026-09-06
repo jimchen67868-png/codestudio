@@ -88,7 +88,22 @@ android {
                 "META-INF/LICENSE",
                 "META-INF/LICENSE.txt",
                 "META-INF/NOTICE",
-                "META-INF/NOTICE.txt",
+                "META-INF/NOTICE.txt"
+            )
+            // IMPORTANT: pickFirsts, not excludes, for these two.
+            // *.kotlin_builtins files are pre-serialized built-in type
+            // metadata (kotlin.kotlin_builtins, collections, ranges,
+            // etc.) that the Kotlin compiler reads at RUNTIME to
+            // bootstrap JvmBuiltIns. Excluding them entirely (our
+            // earlier fix for a duplicate-file packaging conflict)
+            // removes them from the APK altogether, forcing the
+            // compiler onto a slow reflection-based fallback path
+            // (kotlin-reflect's JvmBuiltIns.getCustomizer() ->
+            // DeserializationComponentsForJava -> module-by-classloader
+            // bootstrapping) that then breaks on Android's classloader
+            // model. pickFirsts keeps ONE copy (deduplicated, not
+            // removed), which should let normal bootstrapping succeed.
+            pickFirsts += setOf(
                 "**/*.kotlin_builtins",
                 "**/*.kotlin_module"
             )
