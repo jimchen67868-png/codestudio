@@ -73,6 +73,16 @@ object KotlinCompileEngine {
             mkdirs()
         }
 
+        // A dedicated, empty directory for -kotlin-home below — not the
+        // android.jar cache folder, which isn't semantically a Kotlin
+        // installation home even though it happened to work as "any
+        // existing directory". Nothing actually needs to live in here:
+        // with -no-stdlib/-no-reflect/-no-jdk all set, the compiler
+        // shouldn't try to load anything FROM this path, it just needs a
+        // real File to construct KotlinPathsFromHomeDir with instead of
+        // running its broken getResource()-based auto-detection.
+        val kotlinHomeDir = File(projectRoot, "build/kotlin-home").apply { mkdirs() }
+
         val classpath = listOf(androidJar, kotlinStdlib)
             .joinToString(File.pathSeparator) { it.absolutePath }
 
@@ -94,10 +104,9 @@ object KotlinCompileEngine {
             // JAR-based classloading but has no equivalent on Android's
             // DEX-based classloading (individual classes aren't
             // browsable resources there at all), causing
-            // "IllegalStateException: Resource not found". We don't need
-            // real auto-discovery since we supply our own classpath
-            // explicitly via -cp — any existing directory satisfies this.
-            "-kotlin-home", androidJar.parentFile!!.absolutePath,
+            // "IllegalStateException: Resource not found". Confirmed
+            // necessary: removing this flag reproduces that crash.
+            "-kotlin-home", kotlinHomeDir.absolutePath,
             "-no-reflect",
             "-jvm-target", "1.8",
             *sourceFiles.map { it.absolutePath }.toTypedArray()
