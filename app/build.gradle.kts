@@ -225,7 +225,7 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
         dexOutputDir.deleteRecursively()
         dexOutputDir.mkdirs()
 
-        val androidJarPath = android.bootClasspath.joinToString(File.pathSeparator) { it.absolutePath }
+        val androidLibArgs = android.bootClasspath.flatMap { listOf("--lib", it.absolutePath) }
         val jarFiles = sourceJars.files.toList()
 
         project.javaexec {
@@ -233,9 +233,8 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
             mainClass.set("com.android.tools.r8.D8")
             args = listOf(
                 "--min-api", "26",
-                "--output", dexOutputDir.absolutePath,
-                "--lib", androidJarPath
-            ) + jarFiles.map { it.absolutePath }
+                "--output", dexOutputDir.absolutePath
+            ) + androidLibArgs + jarFiles.map { it.absolutePath }
         }
 
         bundleOutput.parentFile.mkdirs()
