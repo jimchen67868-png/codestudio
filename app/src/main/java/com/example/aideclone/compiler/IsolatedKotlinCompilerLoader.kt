@@ -50,6 +50,13 @@ object IsolatedKotlinCompilerLoader {
                 bundleFile.outputStream().use { output -> input.copyTo(output) }
             }
         }
+        // Android refuses to load a DEX file for execution from a path
+        // that's still writable by this app — a security measure (W^X)
+        // against loading tampered/dynamically-downloaded code, throwing
+        // "SecurityException: Writable dex file ... is not allowed."
+        // Marking it read-only right after extraction (idempotent if
+        // already set) is the standard, required fix.
+        bundleFile.setWritable(false)
 
         val optimizedDir = File(sdkDir, "dex-cache").apply { mkdirs() }
 
