@@ -213,6 +213,15 @@ val r8Tool: Configuration by configurations.creating
 
 dependencies {
     isolatedKotlinCompiler("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
+    // The compiler's OWN internal CLI-argument-parsing code
+    // (ArgumentUtilsKt) uses real Kotlin reflection (KProperty.javaField
+    // etc.) to inspect its own argument classes at a static initializer
+    // — unrelated to our -no-reflect compiler flag, which only controls
+    // whether reflect gets added to the classpath for code WE compile.
+    // Without this, static init fails with "IllegalStateException: Java
+    // field should be present for property fragments (Kotlin reflection
+    // is not available)" before any source file is even looked at.
+    isolatedKotlinCompiler("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
     r8Tool("com.android.tools:r8:8.5.10")
 }
 
