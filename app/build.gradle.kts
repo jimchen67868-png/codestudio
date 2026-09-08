@@ -161,6 +161,22 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 
+    // kotlin.jvm.internal.Reflection's static initializer runs once per
+    // classloader and tries to locate kotlin.reflect.jvm.internal.
+    // ReflectionFactoryImpl. Since Reflection is part of kotlin-stdlib
+    // (shared with the isolated compiler bundle via parent-classloader
+    // delegation, not duplicated there), whichever classloader touches
+    // it FIRST determines whether reflection ends up permanently
+    // "available" or falls back to a limited stub for the rest of the
+    // process — and normal Kotlin app code triggers this early, well
+    // before the isolated compiler bundle is ever loaded. Adding
+    // kotlin-reflect only to the isolated bundle wasn't enough; it has
+    // to be on this app's own classpath from the start too. (Unlike
+    // kotlin-compiler-embeddable, kotlin-reflect doesn't have the
+    // IntelliJ-platform self-location architecture that required
+    // isolation in the first place, so bundling it normally here is safe.)
+    implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
+
     // NOTE: kotlin-compiler-embeddable is deliberately NOT declared here.
     // It's isolated into its own separate dex bundle instead — see
     // buildIsolatedKotlinCompilerBundle below and
