@@ -1,3 +1,7 @@
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -237,12 +241,12 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
         bundleOutput.parentFile.mkdirs()
         if (bundleOutput.exists()) bundleOutput.delete()
 
-        java.util.zip.ZipOutputStream(bundleOutput.outputStream()).use { zos ->
+        ZipOutputStream(bundleOutput.outputStream()).use { zos ->
             val writtenEntries = mutableSetOf<String>()
 
             fun writeEntry(name: String, bytes: ByteArray) {
                 if (writtenEntries.add(name)) {
-                    zos.putNextEntry(java.util.zip.ZipEntry(name))
+                    zos.putNextEntry(ZipEntry(name))
                     zos.write(bytes)
                     zos.closeEntry()
                 }
@@ -259,7 +263,7 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
             // path collisions across jars (mirrors the app's own
             // pickFirsts behavior above).
             jarFiles.forEach { jarFile ->
-                java.util.zip.ZipFile(jarFile).use { zip ->
+                ZipFile(jarFile).use { zip ->
                     zip.entries().asSequence()
                         .filter { !it.isDirectory && !it.name.endsWith(".class") }
                         .forEach { entry ->
