@@ -1,7 +1,6 @@
 package com.example.aideclone.compiler
 
-import org.jetbrains.kotlin.cli.common.ExitCode
-import org.jetbrains.kotlin.cli.jvm.K2JVMCompiler
+import android.content.Context
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
@@ -13,23 +12,18 @@ import java.io.PrintStream
  * types so the rest of the app — diagnostics panel, inline squiggles,
  * build log — doesn't need to know which language compiled a project.
  *
- * Uses K2JVMCompiler's simple exec(PrintStream, vararg String) entry
- * point (the same one `kotlinc` itself calls) rather than wiring up a
- * custom MessageCollector, since that requires touching more
- * version-sensitive internal API surface than this simple CLI-style
- * entry point does. Diagnostics are regex-parsed from the printed
- * output, same approach as CompileEngine uses for ECJ.
+ * The compiler itself is loaded from an ISOLATED dex+resources bundle via
+ * IsolatedKotlinCompilerLoader, not as a normal app dependency — see that
+ * class's doc for why (its internal bootstrapping needs to discover its
+ * own bundled resource files, which breaks if merged anonymously into
+ * this app's own dex). All interaction with it goes through reflection
+ * as a result, since its classes aren't on this app's own compile-time
+ * classpath at all.
  *
- * -no-stdlib is important: without it, the compiler tries to locate its
- * own bundled stdlib via a "kotlin home" directory layout that doesn't
- * exist in this environment. We supply kotlin-stdlib.jar explicitly on
- * -cp instead (see MainActivity's ensureKotlinStdlib()).
- *
- * Expect this to need iteration once actually run on-device — the
- * embedded Kotlin compiler is far larger and more complex than ECJ was,
- * and ECJ alone needed several rounds of Android-specific fixes
- * (bootclasspath detection, annotation processor init, missing
- * javax.lang.model classes). This hasn't been runtime-tested at all yet.
+ * -no-stdlib/-no-jdk/-kotlin-home/-no-reflect all bypass various pieces
+ * of desktop-JVM auto-detection that don't have equivalents on Android
+ * (self-locating via getResource(), java.home pointing at a real JDK,
+ * etc.) — see inline comments below for each.
  */
 object KotlinCompileEngine {
 
@@ -37,7 +31,12 @@ object KotlinCompileEngine {
         """^(.+\.kt):\s*(\d+):\s*(\d+):\s*(error|warning):\s*(.*)$"""
     )
 
-    fun compileProject(projectRoot: File, androidJar: File?, kotlinStdlib: File): CompileResult {
+    fun compileProject(
+        context: Context,
+        projectRoot: File,
+        androidJar: File?,
+        kotlinStdlib: File
+    ): CompileResult {
         if (androidJar == null || !androidJar.exists()) {
             return CompileResult(
                 success = false,
@@ -102,10 +101,8 @@ object KotlinCompileEngine {
             // as a browsable resource via getResource() to figure out
             // "where am I installed" — a trick that works for desktop
             // JAR-based classloading but has no equivalent on Android's
-            // DEX-based classloading (individual classes aren't
-            // browsable resources there at all), causing
-            // "IllegalStateException: Resource not found". Confirmed
-            // necessary: removing this flag reproduces that crash.
+            // DEX-based classloading. Confirmed necessary: removing this
+            // flag reproduces that crash.
             "-kotlin-home", kotlinHomeDir.absolutePath,
             "-no-reflect",
             "-jvm-target", "1.8",
@@ -115,15 +112,15 @@ object KotlinCompileEngine {
         val outBytes = ByteArrayOutputStream()
         val printStream = PrintStream(outBytes, true, "UTF-8")
 
-        val exitCode = try {
-            K2JVMCompiler().exec(printStream, *args)
+        val exitCodeName = try {
+            IsolatedKotlinCompilerLoader.execCompiler(context, printStream, args)
         } catch (t: Throwable) {
             // Same reasoning as CompileEngine/ApkBuilder: catch Throwable,
             // not just Exception, since Android-incompatible internals can
             // throw Error subtypes like NoClassDefFoundError.
             printStream.println("Internal Kotlin compiler error: $t")
             printStream.println(t.stackTraceToString())
-            ExitCode.INTERNAL_ERROR
+            "INTERNAL_ERROR"
         }
 
         val rawOutput = outBytes.toString("UTF-8")
@@ -131,7 +128,7 @@ object KotlinCompileEngine {
         val outputHasClasses = outputDir.walkTopDown().any { it.isFile && it.extension == "class" }
 
         return CompileResult(
-            success = exitCode == ExitCode.OK && outputHasClasses,
+            success = exitCodeName == "OK" && outputHasClasses,
             diagnostics = diagnostics,
             rawOutput = rawOutput
         )

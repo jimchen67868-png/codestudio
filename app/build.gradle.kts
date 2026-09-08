@@ -157,13 +157,18 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 
-    // Kotlin compiler, embeddable variant (a relocated/shaded build meant
-    // for exactly this — invoking it programmatically from another JVM
-    // tool, which is also how Maven/Ant's Kotlin plugins work without
-    // Gradle's daemon). Much larger and more complex than ECJ; expect
-    // similar on-device compatibility issues to what ECJ needed fixed,
-    // likely more of them given its size.
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
+    // NOTE: kotlin-compiler-embeddable is deliberately NOT declared here.
+    // It's isolated into its own separate dex bundle instead — see
+    // buildIsolatedKotlinCompilerBundle below and
+    // IsolatedKotlinCompilerLoader.kt. Merging it into this app's own
+    // classes.dex broke its internal KotlinCoreEnvironment bootstrapping
+    // ("Unable to find extension point configuration"), which relies on
+    // discovering its own bundled resource files via getResource()-based
+    // self-location — a trick that only works if its code remains a
+    // distinguishable, separate classpath unit. This is a documented,
+    // confirmed requirement (the same root cause Spring Boot fat-jar
+    // users hit with this exact library, fixed only by keeping its jars
+    // unpacked/separate rather than merged).
 }
 
 // The embedded Kotlin compiler needs kotlin-stdlib.jar as an explicit
@@ -185,6 +190,90 @@ tasks.register<Copy>("bundleKotlinStdlib") {
     rename { "kotlin-stdlib.jar" }
 }
 
+// Isolates kotlin-compiler-embeddable into its own separate dex+resources
+// bundle, loaded at runtime via a dedicated DexClassLoader (see
+// IsolatedKotlinCompilerLoader.kt) rather than merged into this app's own
+// classes.dex. See the NOTE in the dependencies block above for why.
+//
+// Two things have to be preserved for the isolated compiler to actually
+// work, not just its .class files:
+//   1. Its bytecode, dexed via D8 (D8's CLI accepts whole jars directly
+//      and dexes only their .class entries).
+//   2. Its bundled NON-class resources (extension-point XML configs
+//      etc.) — D8 silently drops these since dexing only processes
+//      .class files. They're copied through as-is into the same bundle,
+//      since that's literally the exact resource the compiler crashes
+//      looking for if it's missing.
+val isolatedKotlinCompiler: Configuration by configurations.creating
+val r8Tool: Configuration by configurations.creating
+
+dependencies {
+    isolatedKotlinCompiler("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
+    r8Tool("com.android.tools:r8:8.5.10")
+}
+
+tasks.register("buildIsolatedKotlinCompilerBundle") {
+    val dexOutputDir = layout.buildDirectory.dir("isolated-kotlin-compiler-dex").get().asFile
+    val bundleOutput = file("src/main/assets/kotlin-compiler-isolated.jar")
+    val sourceJars = isolatedKotlinCompiler
+
+    doLast {
+        dexOutputDir.deleteRecursively()
+        dexOutputDir.mkdirs()
+
+        val androidJarPath = android.bootClasspath.joinToString(File.pathSeparator) { it.absolutePath }
+        val jarFiles = sourceJars.files.toList()
+
+        project.javaexec {
+            classpath = r8Tool
+            mainClass.set("com.android.tools.r8.D8")
+            args = listOf(
+                "--min-api", "26",
+                "--output", dexOutputDir.absolutePath,
+                "--lib", androidJarPath
+            ) + jarFiles.map { it.absolutePath }
+        }
+
+        bundleOutput.parentFile.mkdirs()
+        if (bundleOutput.exists()) bundleOutput.delete()
+
+        java.util.zip.ZipOutputStream(bundleOutput.outputStream()).use { zos ->
+            val writtenEntries = mutableSetOf<String>()
+
+            fun writeEntry(name: String, bytes: ByteArray) {
+                if (writtenEntries.add(name)) {
+                    zos.putNextEntry(java.util.zip.ZipEntry(name))
+                    zos.write(bytes)
+                    zos.closeEntry()
+                }
+            }
+
+            // classes.dex, classes2.dex, etc. — must come from D8's
+            // output, which is what DexClassLoader actually executes.
+            dexOutputDir.listFiles { f -> f.extension == "dex" }
+                ?.sortedBy { it.name }
+                ?.forEach { writeEntry(it.name, it.readBytes()) }
+
+            // Everything else: non-.class resources from every source
+            // jar, carried through untouched. First one wins on
+            // path collisions across jars (mirrors the app's own
+            // pickFirsts behavior above).
+            jarFiles.forEach { jarFile ->
+                java.util.zip.ZipFile(jarFile).use { zip ->
+                    zip.entries().asSequence()
+                        .filter { !it.isDirectory && !it.name.endsWith(".class") }
+                        .forEach { entry ->
+                            zip.getInputStream(entry).use { input ->
+                                writeEntry(entry.name, input.readBytes())
+                            }
+                        }
+                }
+            }
+        }
+    }
+}
+
 tasks.named("preBuild") {
     dependsOn("bundleKotlinStdlib")
+    dependsOn("buildIsolatedKotlinCompilerBundle")
 }

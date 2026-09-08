@@ -222,7 +222,7 @@ class MainActivity : AppCompatActivity() {
 
                 val result = if (hasKotlin) {
                     val stdlib = ensureKotlinStdlib()
-                    KotlinCompileEngine.compileProject(project.rootDir, androidJar, stdlib)
+                    KotlinCompileEngine.compileProject(applicationContext, project.rootDir, androidJar, stdlib)
                 } else {
                     CompileEngine.compileProject(project.rootDir, androidJar)
                 }
