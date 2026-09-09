@@ -282,14 +282,25 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
                 ?.sortedBy { it.name }
                 ?.forEach { writeEntry(it.name, it.readBytes()) }
 
-            // Everything else: non-.class resources from every source
-            // jar, carried through untouched. First one wins on
-            // path collisions across jars (mirrors the app's own
-            // pickFirsts behavior above).
+            // Everything else, INCLUDING the original .class file bytes
+            // (not just non-class resources) — carried through as
+            // passive zip entries alongside the actual executable
+            // classes.dex. This is the real fix for
+            // "IllegalStateException: Resource not found: /some/Class
+            // .class": DEX format has no concept of individual browsable
+            // per-class resources at all, so PathUtil's
+            // getResource()-based self-location can never succeed
+            // against dexed code alone, no matter how it's packaged or
+            // isolated. Keeping the original .class bytes present too
+            // (unused for actual class loading — DexClassLoader always
+            // prefers its dex code for that) gives getResource() a real
+            // zip entry to find, satisfying the self-location check.
+            // First entry wins on path collisions across jars (mirrors
+            // the app's own pickFirsts behavior above).
             jarFiles.forEach { jarFile ->
                 ZipFile(jarFile).use { zip ->
                     zip.entries().asSequence()
-                        .filter { !it.isDirectory && !it.name.endsWith(".class") }
+                        .filter { !it.isDirectory }
                         .forEach { entry ->
                             zip.getInputStream(entry).use { input ->
                                 writeEntry(entry.name, input.readBytes())
