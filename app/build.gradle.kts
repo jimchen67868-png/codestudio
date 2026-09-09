@@ -249,6 +249,12 @@ dependencies {
     // parsing semantics right by hand would be far more error-prone than
     // using the actual standard API definitions.
     isolatedKotlinCompiler("javax.xml.stream:stax-api:1.0-2")
+    // Trove4j (JetBrains' fork, used throughout IntelliJ Platform code —
+    // which kotlin-compiler-embeddable is built on) — primitive-backed
+    // collections used pervasively for memory efficiency. Another real
+    // transitive dependency, same reasoning as stax-api: too large/
+    // behaviorally significant to safely hand-stub.
+    isolatedKotlinCompiler("org.jetbrains.intellij.deps:trove4j:1.0.20200330")
     r8Tool("com.android.tools:r8:8.5.10")
 }
 
