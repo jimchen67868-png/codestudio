@@ -35,7 +35,8 @@ object KotlinCompileEngine {
         context: Context,
         projectRoot: File,
         androidJar: File?,
-        kotlinStdlib: File
+        kotlinStdlib: File,
+        extraLibraries: List<File> = emptyList()
     ): CompileResult {
         if (androidJar == null || !androidJar.exists()) {
             return CompileResult(
@@ -82,7 +83,7 @@ object KotlinCompileEngine {
         // running its broken getResource()-based auto-detection.
         val kotlinHomeDir = File(projectRoot, "build/kotlin-home").apply { mkdirs() }
 
-        val classpath = listOf(androidJar, kotlinStdlib)
+        val classpath = (listOf(androidJar, kotlinStdlib) + extraLibraries)
             .joinToString(File.pathSeparator) { it.absolutePath }
 
         val args = arrayOf(

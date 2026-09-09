@@ -46,6 +46,14 @@ class MainActivity : AppCompatActivity() {
     // subclasses) is cached. See importAndroidJarLauncher below.
     private val sdkJarFile: File by lazy { File(filesDir, "sdk/android.jar") }
 
+    // Additional imported library jars (AndroidX, other Maven deps) —
+    // android.jar only covers the core android.* platform, not separate
+    // libraries like androidx.appcompat that many real projects use.
+    // Global pool, shared across all projects, same pattern as android.jar.
+    private val libraryJarsDir: File by lazy { File(filesDir, "sdk/libs").apply { mkdirs() } }
+    private fun importedLibraryJars(): List<File> =
+        libraryJarsDir.listFiles { f -> f.extension == "jar" }?.toList() ?: emptyList()
+
     // Bundled at build time (see app/build.gradle.kts' bundleKotlinStdlib
     // task) as an asset, extracted to a real file here on first use since
     // the Kotlin compiler needs an actual classpath-usable jar, not an
@@ -67,6 +75,11 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) importAndroidJar(uri)
         }
 
+    private val importLibraryJarLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importLibraryJar(uri)
+        }
+
     private val prefs by lazy { getSharedPreferences("aideclone", MODE_PRIVATE) }
 
     companion object {
@@ -76,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_RAW_OUTPUT = 4
         private const val MENU_OPEN_PROJECT = 5
         private const val MENU_STORAGE_PERMISSION = 6
+        private const val MENU_IMPORT_LIBRARY = 7
         private const val PREF_LAST_PROJECT_PATH = "last_project_path"
     }
 
@@ -126,6 +140,7 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, MENU_BUILD_APK, 1, "Build APK")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
+        menu.add(0, MENU_IMPORT_LIBRARY, 2, "Import Library JAR")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
         menu.add(0, MENU_OPEN_PROJECT, 4, "Open Project")
         menu.add(0, MENU_STORAGE_PERMISSION, 5, "Grant Storage Access")
@@ -137,6 +152,7 @@ class MainActivity : AppCompatActivity() {
             MENU_COMPILE -> { runCompile { }; true }
             MENU_BUILD_APK -> { runBuildApk(); true }
             MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
+            MENU_IMPORT_LIBRARY -> { importLibraryJarLauncher.launch(arrayOf("*/*")); true }
             MENU_RAW_OUTPUT -> {
                 val raw = CompileResultStore.lastResult?.rawOutput
                 showBuildLog(if (raw.isNullOrBlank()) "No compile run yet, or ECJ produced no console output." else raw)
@@ -220,11 +236,12 @@ class MainActivity : AppCompatActivity() {
                 val hasKotlin = project.rootDir.walkTopDown()
                     .any { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
 
+                val extraLibraries = importedLibraryJars()
                 val result = if (hasKotlin) {
                     val stdlib = ensureKotlinStdlib()
-                    KotlinCompileEngine.compileProject(applicationContext, project.rootDir, androidJar, stdlib)
+                    KotlinCompileEngine.compileProject(applicationContext, project.rootDir, androidJar, stdlib, extraLibraries)
                 } else {
-                    CompileEngine.compileProject(project.rootDir, androidJar)
+                    CompileEngine.compileProject(project.rootDir, androidJar, extraLibraries)
                 }
                 CompileResultStore.update(result)
 
@@ -290,7 +307,8 @@ class MainActivity : AppCompatActivity() {
                         packageName = project.packageName,
                         mainActivityClass = project.mainActivityClass,
                         appName = project.appName,
-                        signingStorageDir = signingDir
+                        signingStorageDir = signingDir,
+                        extraLibraries = importedLibraryJars()
                     )
 
                     runOnUiThread {
@@ -394,6 +412,38 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+
+    private fun importLibraryJar(uri: Uri) {
+        Toast.makeText(this, "Importing library…", Toast.LENGTH_SHORT).show()
+        backgroundExecutor.execute {
+            try {
+                val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}.jar"
+                val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
+                val destFile = File(libraryJarsDir, safeName)
+                contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "Imported $safeName (${destFile.length() / 1024} KB)", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && nameIndex >= 0) cursor.getString(nameIndex) else null
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 

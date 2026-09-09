@@ -32,7 +32,8 @@ object ApkBuilder {
         packageName: String,
         mainActivityClass: String,
         appName: String,
-        signingStorageDir: File
+        signingStorageDir: File,
+        extraLibraries: List<File> = emptyList()
     ): BuildResult {
         val log = StringBuilder()
         val buildDir = File(projectRoot, "build").apply { mkdirs() }
@@ -58,7 +59,7 @@ object ApkBuilder {
 
             log.appendLine("Dexing ${classesDir.path} ...")
             val dexOutputDir = File(projectRoot, "build/dex")
-            val dexResult = DexEngine.dex(classesDir, dexOutputDir)
+            val dexResult = DexEngine.dex(classesDir, dexOutputDir, extraLibraries = extraLibraries)
             log.append(dexResult.log)
             if (!dexResult.success || dexResult.dexFile == null) {
                 log.appendLine("Dexing failed — see D8 diagnostics above.")

@@ -30,7 +30,12 @@ data class DexResult(val dexFile: File?, val log: String, val success: Boolean)
  */
 object DexEngine {
 
-    fun dex(classesDir: File, outputDir: File, minApiLevel: Int = 24): DexResult {
+    fun dex(
+        classesDir: File,
+        outputDir: File,
+        minApiLevel: Int = 24,
+        extraLibraries: List<File> = emptyList()
+    ): DexResult {
         outputDir.mkdirs()
         val log = StringBuilder()
 
@@ -57,8 +62,16 @@ object DexEngine {
                 return DexResult(dexFile = null, log = log.toString(), success = false)
             }
 
+            // Extra libraries (AndroidX etc.) are passed as whole jars —
+            // unlike our own compiled output, D8's addProgramFiles()
+            // accepts jar files directly (it dexes their .class entries
+            // itself). Their real implementation has to ship in the
+            // final APK: unlike android.jar's stubs (the OS provides the
+            // actual implementation at runtime), these libraries aren't
+            // part of the OS at all.
             val command = D8Command.builder(handler)
                 .addProgramFiles(classFiles)
+                .addProgramFiles(extraLibraries.map { it.toPath() })
                 .setOutput(outputDir.toPath(), OutputMode.DexIndexed)
                 .setMinApiLevel(minApiLevel)
                 .setMode(CompilationMode.DEBUG)

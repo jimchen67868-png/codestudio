@@ -38,7 +38,7 @@ object CompileEngine {
         """^\d+\.\s+(ERROR|WARNING)\s+in\s+(.+?)\s+\(at line (\d+)\)$"""
     )
 
-    fun compileProject(projectRoot: File, androidJar: File?): CompileResult {
+    fun compileProject(projectRoot: File, androidJar: File?, extraLibraries: List<File> = emptyList()): CompileResult {
         if (androidJar == null || !androidJar.exists()) {
             return CompileResult(
                 success = false,
@@ -75,7 +75,11 @@ object CompileEngine {
         outWriter.write(
             "androidJar path: ${androidJar.absolutePath}\n" +
                 "  exists=${androidJar.exists()} canRead=${androidJar.canRead()} " +
-                "length=${androidJar.length()} bytes\n\n"
+                "length=${androidJar.length()} bytes\n" +
+                (if (extraLibraries.isNotEmpty()) {
+                    "extra libraries: ${extraLibraries.joinToString(", ") { it.name }}\n"
+                } else "") +
+                "\n"
         )
 
         // -1.8 target/source keeps this compatible with typical Android
@@ -83,6 +87,15 @@ object CompileEngine {
         // the whole batch (we want a full diagnostics list, not just the
         // first error). -bootclasspath (not -classpath) is what avoids
         // ECJ's crash-prone auto-detection — see class doc above.
+        // AndroidX/other library jars go on -classpath, not
+        // -bootclasspath — android.jar defines the platform's own core
+        // types, additional libraries are ordinary application deps.
+        val classpathArgs: Array<String> = if (extraLibraries.isNotEmpty()) {
+            arrayOf("-classpath", extraLibraries.joinToString(File.pathSeparator) { it.absolutePath })
+        } else {
+            emptyArray()
+        }
+
         val args = arrayOf(
             "-1.8",
             "-source", "1.8",
@@ -98,6 +111,7 @@ object CompileEngine {
             // is the standard javac/ecj flag to skip that entirely.
             "-proc:none",
             "-bootclasspath", androidJar.absolutePath,
+            *classpathArgs,
             *sourceFiles.map { it.absolutePath }.toTypedArray()
         )
 
