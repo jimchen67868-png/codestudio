@@ -238,6 +238,17 @@ dependencies {
     // field should be present for property fragments (Kotlin reflection
     // is not available)" before any source file is even looked at.
     isolatedKotlinCompiler("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
+    // javax.xml.stream (JSR-173 StAX API) — Android has never shipped
+    // this JDK package at all. kotlin-compiler-embeddable already
+    // bundles its own real StAX implementation (a relocated/shaded copy
+    // of Woodstox, visible as org.jetbrains.kotlin.org.codehaus.stax2.*
+    // in stack traces) which it uses to parse its own bundled plugin
+    // descriptor XML files — it just needs the STANDARD interface
+    // definitions to implement against. A real dependency here, not a
+    // hand-written stub, since getting a ~50-method interface's exact
+    // parsing semantics right by hand would be far more error-prone than
+    // using the actual standard API definitions.
+    isolatedKotlinCompiler("javax.xml.stream:stax-api:1.0-2")
     r8Tool("com.android.tools:r8:8.5.10")
 }
 
