@@ -90,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_OPEN_PROJECT = 5
         private const val MENU_STORAGE_PERMISSION = 6
         private const val MENU_IMPORT_LIBRARY = 7
+        private const val MENU_MANAGE_LIBRARIES = 8
         private const val PREF_LAST_PROJECT_PATH = "last_project_path"
     }
 
@@ -141,6 +142,7 @@ class MainActivity : AppCompatActivity() {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
         menu.add(0, MENU_IMPORT_LIBRARY, 2, "Import Library JAR")
+        menu.add(0, MENU_MANAGE_LIBRARIES, 2, "Manage Libraries")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
         menu.add(0, MENU_OPEN_PROJECT, 4, "Open Project")
         menu.add(0, MENU_STORAGE_PERMISSION, 5, "Grant Storage Access")
@@ -153,6 +155,7 @@ class MainActivity : AppCompatActivity() {
             MENU_BUILD_APK -> { runBuildApk(); true }
             MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
             MENU_IMPORT_LIBRARY -> { importLibraryJarLauncher.launch(arrayOf("*/*")); true }
+            MENU_MANAGE_LIBRARIES -> { showManageLibrariesDialog(); true }
             MENU_RAW_OUTPUT -> {
                 val raw = CompileResultStore.lastResult?.rawOutput
                 showBuildLog(if (raw.isNullOrBlank()) "No compile run yet, or ECJ produced no console output." else raw)
@@ -413,6 +416,33 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showManageLibrariesDialog() {
+        val jars = importedLibraryJars().sortedBy { it.name }
+        if (jars.isEmpty()) {
+            Toast.makeText(this, "No extra libraries imported yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = jars.map { "${it.name} (${it.length() / 1024} KB)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Manage Libraries")
+            .setItems(labels) { _, which ->
+                val jar = jars[which]
+                AlertDialog.Builder(this)
+                    .setTitle("Remove ${jar.name}?")
+                    .setPositiveButton("Remove") { _, _ ->
+                        if (jar.delete()) {
+                            Toast.makeText(this, "Removed ${jar.name}", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this, "Failed to remove ${jar.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun importLibraryJar(uri: Uri) {
