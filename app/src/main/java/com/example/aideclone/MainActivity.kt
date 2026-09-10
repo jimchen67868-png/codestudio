@@ -76,8 +76,8 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val importLibraryJarLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) importLibraryJar(uri)
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) importLibraryJars(uris)
         }
 
     private val prefs by lazy { getSharedPreferences("aideclone", MODE_PRIVATE) }
@@ -445,22 +445,31 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun importLibraryJar(uri: Uri) {
-        Toast.makeText(this, "Importing library…", Toast.LENGTH_SHORT).show()
+    private fun importLibraryJars(uris: List<Uri>) {
+        Toast.makeText(this, "Importing ${uris.size} librar${if (uris.size == 1) "y" else "ies"}…", Toast.LENGTH_SHORT).show()
         backgroundExecutor.execute {
-            try {
-                val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}.jar"
-                val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
-                val destFile = File(libraryJarsDir, safeName)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    destFile.outputStream().use { output -> input.copyTo(output) }
+            var successCount = 0
+            val failures = mutableListOf<String>()
+            for (uri in uris) {
+                try {
+                    val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}.jar"
+                    val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
+                    val destFile = File(libraryJarsDir, safeName)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        destFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    successCount++
+                } catch (e: Exception) {
+                    failures.add("${queryDisplayName(uri) ?: uri}: ${e.message}")
                 }
-                runOnUiThread {
-                    Toast.makeText(this, "Imported $safeName (${destFile.length() / 1024} KB)", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            runOnUiThread {
+                val summary = "Imported $successCount/${uris.size} librar${if (uris.size == 1) "y" else "ies"}"
+                if (failures.isEmpty()) {
+                    Toast.makeText(this, summary, Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "$summary — see log for failures", Toast.LENGTH_LONG).show()
+                    showBuildLog("$summary\n\nFailures:\n${failures.joinToString("\n")}")
                 }
             }
         }
