@@ -2,6 +2,7 @@ package com.example.aideclone.packaging
 
 import com.android.apksig.ApkSigner
 import com.example.aideclone.compiler.DexEngine
+import com.example.aideclone.compiler.ResourceCompiler
 import com.reandroid.apk.ApkModule
 import com.reandroid.archive.ByteInputSource
 import com.reandroid.arsc.chunk.TableBlock
@@ -13,17 +14,15 @@ data class BuildResult(val success: Boolean, val apkFile: File?, val log: String
 /**
  * M3's dex + resource + signing pipeline:
  *   1. Dex the .class files M2's CompileEngine produced (D8).
- *   2. Build a minimal binary AndroidManifest.xml + resources.arsc with
+ *   2. Build a binary AndroidManifest.xml + resources.arsc with
  *      ARSCLib — a pure-Java aapt2 replacement, so no native ARM binary
- *      is needed on-device.
+ *      is needed on-device. Real res/ folder content (layouts, strings,
+ *      drawables) is handled by ResourceCompiler; this just wires its
+ *      output into the final APK, or falls back to a minimal
+ *      app_name-only table for projects with no res/ folder at all.
  *   3. Assemble dex + manifest + resources into an unsigned APK.
  *   4. Sign it with apksig, using an on-device generated debug key
  *      (KeystoreManager).
- *
- * Scope note: this produces a minimal single-activity APK — no res/
- * folder support (drawables, layouts, string resources beyond app_name),
- * no multi-dex, no resource qualifiers. Real res/ folder compilation is a
- * good M4 candidate; ARSCLib supports it, this just doesn't wire it up yet.
  */
 object ApkBuilder {
 
@@ -33,7 +32,8 @@ object ApkBuilder {
         mainActivityClass: String,
         appName: String,
         signingStorageDir: File,
-        extraLibraries: List<File> = emptyList()
+        extraLibraries: List<File> = emptyList(),
+        frameworkApkFile: File? = null
     ): BuildResult {
         val log = StringBuilder()
         val buildDir = File(projectRoot, "build").apply { mkdirs() }
@@ -68,14 +68,30 @@ object ApkBuilder {
             log.appendLine("Dex OK: ${dexResult.dexFile.length()} bytes")
 
             val apkModule = ApkModule()
-            val tableBlock = TableBlock()
             val manifest = AndroidManifestBlock()
+
+            // Real res/ folder compilation (layouts, strings, drawables,
+            // etc.) — falls back to a minimal table with just app_name
+            // for plain projects with no res/ folder at all.
+            val resResult = ResourceCompiler.compileResources(projectRoot, frameworkApkFile, packageName)
+            log.appendLine(resResult.rawOutput)
+            if (!resResult.success) {
+                return finish(BuildResult(false, null, log.toString()))
+            }
+
+            val tableBlock = resResult.tableBlock ?: TableBlock()
+            val packageBlock = resResult.packageBlock ?: tableBlock.newPackage(0x7f, packageName)
+            val appNameEntry = packageBlock.getOrCreate("", "string", "app_name")
+            appNameEntry.setValueAsString(appName)
+
             apkModule.setTableBlock(tableBlock)
             apkModule.setManifest(manifest)
 
-            val packageBlock = tableBlock.newPackage(0x7f, packageName)
-            val appNameEntry = packageBlock.getOrCreate("", "string", "app_name")
-            appNameEntry.setValueAsString(appName)
+            // Fold in the actual resource files (layouts, drawables,
+            // etc.) ResourceCompiler registered, alongside the dex below.
+            resResult.fileResources.forEach { (apkPath, sourceFile) ->
+                apkModule.add(ByteInputSource(sourceFile.readBytes(), apkPath))
+            }
 
             manifest.setPackageName(packageName)
             manifest.setVersionCode(1)

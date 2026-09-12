@@ -46,6 +46,12 @@ class MainActivity : AppCompatActivity() {
     // subclasses) is cached. See importAndroidJarLauncher below.
     private val sdkJarFile: File by lazy { File(filesDir, "sdk/android.jar") }
 
+    // Real framework-res.apk (e.g. via `adb pull
+    // /system/framework/framework-res.apk`) — needed for real res/
+    // folder compilation (ResourceCompiler), separate from android.jar
+    // which only has Java class stubs, no actual resource data.
+    private val frameworkApkFile: File by lazy { File(filesDir, "sdk/framework-res.apk") }
+
     // Additional imported library jars (AndroidX, other Maven deps) —
     // android.jar only covers the core android.* platform, not separate
     // libraries like androidx.appcompat that many real projects use.
@@ -75,6 +81,11 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) importAndroidJar(uri)
         }
 
+    private val importFrameworkResourcesLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importFrameworkResources(uri)
+        }
+
     private val importLibraryJarLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNotEmpty()) importLibraryJars(uris)
@@ -89,6 +100,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_RAW_OUTPUT = 4
         private const val MENU_OPEN_PROJECT = 5
         private const val MENU_STORAGE_PERMISSION = 6
+        private const val MENU_IMPORT_FRAMEWORK = 9
         private const val MENU_IMPORT_LIBRARY = 7
         private const val MENU_MANAGE_LIBRARIES = 8
         private const val PREF_LAST_PROJECT_PATH = "last_project_path"
@@ -141,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, MENU_BUILD_APK, 1, "Build APK")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         menu.add(0, MENU_IMPORT_SDK, 2, "Import android.jar")
+        menu.add(0, MENU_IMPORT_FRAMEWORK, 2, "Import Framework Resources")
         menu.add(0, MENU_IMPORT_LIBRARY, 2, "Import Library JAR")
         menu.add(0, MENU_MANAGE_LIBRARIES, 2, "Manage Libraries")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
@@ -154,6 +167,7 @@ class MainActivity : AppCompatActivity() {
             MENU_COMPILE -> { runCompile { }; true }
             MENU_BUILD_APK -> { runBuildApk(); true }
             MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
+            MENU_IMPORT_FRAMEWORK -> { importFrameworkResourcesLauncher.launch(arrayOf("*/*")); true }
             MENU_IMPORT_LIBRARY -> { importLibraryJarLauncher.launch(arrayOf("*/*")); true }
             MENU_MANAGE_LIBRARIES -> { showManageLibrariesDialog(); true }
             MENU_RAW_OUTPUT -> {
@@ -231,6 +245,26 @@ class MainActivity : AppCompatActivity() {
 
         backgroundExecutor.execute {
             try {
+                // Resource compilation (R class generation) runs first —
+                // both compile engines just scan for .java/.kt source
+                // files, so the generated R.java/R.kt needs to already
+                // exist on disk before they run for R.layout.xxx etc. to
+                // resolve. Only needed for projects with a res/ folder,
+                // and requires an imported framework-res.apk (see
+                // "Import Framework Resources").
+                val fw = if (frameworkApkFile.exists()) frameworkApkFile else null
+                val resResult = com.example.aideclone.compiler.ResourceCompiler.compileResources(
+                    project.rootDir, fw, project.packageName
+                )
+                if (!resResult.success) {
+                    runOnUiThread {
+                        hideProgress()
+                        showBuildLog("Resource compilation failed:\n\n${resResult.rawOutput}")
+                        onDone(false)
+                    }
+                    return@execute
+                }
+
                 // Language detection: route to the Kotlin compiler if the
                 // project has any .kt files, otherwise ECJ (Java). Mixed
                 // Java+Kotlin projects aren't supported yet — that needs a
@@ -311,7 +345,8 @@ class MainActivity : AppCompatActivity() {
                         mainActivityClass = project.mainActivityClass,
                         appName = project.appName,
                         signingStorageDir = signingDir,
-                        extraLibraries = importedLibraryJars()
+                        extraLibraries = importedLibraryJars(),
+                        frameworkApkFile = if (frameworkApkFile.exists()) frameworkApkFile else null
                     )
 
                     runOnUiThread {
@@ -398,6 +433,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Import android.jar ----
+
+    private fun importFrameworkResources(uri: Uri) {
+        Toast.makeText(this, "Importing framework resources…", Toast.LENGTH_SHORT).show()
+        backgroundExecutor.execute {
+            try {
+                frameworkApkFile.parentFile?.mkdirs()
+                contentResolver.openInputStream(uri)?.use { input ->
+                    frameworkApkFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "Framework resources imported (${frameworkApkFile.length() / 1024} KB)", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     private fun importAndroidJar(uri: Uri) {
         Toast.makeText(this, "Importing android.jar…", Toast.LENGTH_SHORT).show()

@@ -57,7 +57,7 @@ object KotlinCompileEngine {
         }
 
         val sourceFiles = projectRoot.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
+            .filter { it.isFile && it.extension == "kt" && !it.path.contains("/build/classes/") }
             .toList()
 
         if (sourceFiles.isEmpty()) {

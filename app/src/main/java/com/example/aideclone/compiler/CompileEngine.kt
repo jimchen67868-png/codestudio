@@ -147,7 +147,7 @@ object CompileEngine {
     private fun collectJavaFiles(root: File): List<File> {
         val result = mutableListOf<File>()
         root.walkTopDown()
-            .filter { it.isFile && it.extension == "java" && !it.path.contains("/build/") }
+            .filter { it.isFile && it.extension == "java" && !it.path.contains("/build/classes/") }
             .forEach { result.add(it) }
         return result
     }
