@@ -58,8 +58,15 @@ object ResourceCompiler {
         packageName: String
     ): ResourceCompileResult {
         val log = StringBuilder()
-        val resDir = File(projectRoot, "res")
-        if (!resDir.exists() || !resDir.isDirectory) {
+        // Recursive search, not a direct File(projectRoot, "res") lookup:
+        // standard Gradle projects (like ones opened from elsewhere, not
+        // created via our own New Project flow) nest their actual module
+        // content — including res/ — under app/src/main/res/, not at the
+        // opened project root directly. Source file scanning already
+        // searches recursively for exactly this reason.
+        val resDir = projectRoot.walkTopDown()
+            .firstOrNull { it.isDirectory && it.name == "res" && !it.path.contains("/build/") }
+        if (resDir == null) {
             return ResourceCompileResult(
                 success = true,
                 rawOutput = "No res/ folder found — nothing to compile, skipping."
