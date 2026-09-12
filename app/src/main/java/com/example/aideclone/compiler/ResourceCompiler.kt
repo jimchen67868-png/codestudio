@@ -25,10 +25,10 @@ data class ResourceCompileResult(
  * ARSCLib API behavior without being able to test locally (same
  * situation the isolated Kotlin compiler work was in, which needed many
  * rounds of real-error-driven fixes):
- *   - values/*.xml: <string>, <color> entries — straightforward value
- *     resources, most likely to just work.
- *   - layout/*.xml (and similar): registers the file as a resource (so
- *     R.layout.foo compiles) and scans for android:id="@+id/x" to
+ *   - values XML files: string, color, dimen, bool, integer entries —
+ *     straightforward value resources, most likely to just work.
+ *   - layout XML files (and similar): registers the file as a resource
+ *     (so R.layout.foo compiles) and scans for android:id="@+id/x" to
  *     register id resources too. Attempts real binary XML encoding via
  *     ARSCLib's framework-attribute-aware encoder; if that fails, the
  *     entry still registers (unblocking compilation) but the resulting
