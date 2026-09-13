@@ -49,9 +49,9 @@ class ProjectModel(val rootDir: File) {
         } catch (_: Exception) {
             // Fall through with an empty Properties — defaults below apply.
         }
-        packageName = props.getProperty("packageName", "com.example.app")
+        packageName = props.getProperty("packageName") ?: detectPackageName(rootDir) ?: "com.example.app"
         appName = props.getProperty("appName", rootDir.name)
-        mainActivityClass = props.getProperty("mainActivityClass", "$packageName.MainActivity")
+        mainActivityClass = props.getProperty("mainActivityClass") ?: "$packageName.MainActivity"
     }
 
     fun toggleExpand(node: FileNode) {
@@ -84,6 +84,31 @@ class ProjectModel(val rootDir: File) {
     }
 
     companion object {
+        /**
+         * For projects opened via "Open Project" that weren't created by
+         * our own New Project flow (no project.properties), scans any
+         * .java/.kt source file for its `package x.y.z` declaration.
+         * Without this, ProjectModel fell back to a hardcoded default
+         * package name that didn't match the project's real one at all —
+         * meaning ResourceCompiler generated the R class in the WRONG
+         * package, invisible to the project's own source files via
+         * Kotlin/Java's implicit same-package resolution, even though
+         * the R class itself compiled fine in isolation.
+         */
+        private fun detectPackageName(projectRoot: File): String? {
+            val packageRegex = Regex("""^\s*package\s+([\w.]+)\s*;?\s*$""")
+            return projectRoot.walkTopDown()
+                .filter {
+                    it.isFile && (it.extension == "kt" || it.extension == "java") &&
+                        !it.path.contains("/build/")
+                }
+                .firstNotNullOfOrNull { file ->
+                    file.useLines { lines ->
+                        lines.firstNotNullOfOrNull { line -> packageRegex.find(line)?.groupValues?.get(1) }
+                    }
+                }
+        }
+
         enum class Language { JAVA, KOTLIN }
 
         /**
