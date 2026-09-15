@@ -33,7 +33,8 @@ object ApkBuilder {
         appName: String,
         signingStorageDir: File,
         extraLibraries: List<File> = emptyList(),
-        frameworkApkFile: File? = null
+        frameworkApkFile: File? = null,
+        libraryResources: List<com.example.aideclone.compiler.ResourceSource> = emptyList()
     ): BuildResult {
         val log = StringBuilder()
         val buildDir = File(projectRoot, "build").apply { mkdirs() }
@@ -73,7 +74,7 @@ object ApkBuilder {
             // Real res/ folder compilation (layouts, strings, drawables,
             // etc.) — falls back to a minimal table with just app_name
             // for plain projects with no res/ folder at all.
-            val resResult = ResourceCompiler.compileResources(projectRoot, frameworkApkFile, packageName)
+            val resResult = ResourceCompiler.compileResources(projectRoot, frameworkApkFile, packageName, libraryResources)
             log.appendLine(resResult.rawOutput)
             if (!resResult.success) {
                 return finish(BuildResult(false, null, log.toString()))

@@ -15,11 +15,28 @@ data class ResourceCompileResult(
     val fileResources: Map<String, File> = emptyMap() // apk-relative path -> source file, for ApkBuilder to add
 )
 
+/** A source of resources to merge in: the app's own project, or a library's bundled res/. */
+data class ResourceSource(val packageName: String, val resDir: File)
+
 /**
- * Compiles a project's res/ folder — the piece aapt2 normally handles —
- * into (a) resource table entries + a generated R class the compiler can
- * resolve R.layout.xxx/R.id.xxx/etc. against, and (b) binary-encoded
+ * Compiles res/ folders — the app's own AND every imported library's
+ * bundled resources — into (a) one shared resource table + a generated R
+ * class per package the compiler can resolve R.layout.xxx/R.id.xxx/
+ * androidx.appcompat.R.drawable.xxx/etc. against, and (b) binary-encoded
  * resource files ApkBuilder folds into the final APK.
+ *
+ * Why libraries need this too: AndroidX/Jetpack libraries ship their own
+ * internal resources (drawables, styles their widgets use) inside their
+ * AAR, separate from their compiled classes.jar. A real Android build
+ * merges ALL of these — the app's own resources and every library
+ * dependency's — into one shared resource table sharing one package ID
+ * (0x7f), then generates a per-library R class whose fields are NOT
+ * compile-time-final (deliberately, so the actual numeric IDs can be
+ * reassigned at this final link step without needing to recompile the
+ * library's already-compiled bytecode, which only does non-inlined field
+ * reads). That's what makes this approach valid: we don't need to know
+ * or preserve any library's "original" resource IDs, just generate a
+ * structurally-matching R class referencing our own consistent ones.
  *
  * Scope, deliberately staged given how much uncertainty remains in exact
  * ARSCLib API behavior without being able to test locally (same
@@ -29,16 +46,15 @@ data class ResourceCompileResult(
  *     straightforward value resources, most likely to just work.
  *   - layout XML files (and similar): registers the file as a resource
  *     (so R.layout.foo compiles) and scans for android:id="@+id/x" to
- *     register id resources too. Attempts real binary XML encoding via
- *     ARSCLib's framework-attribute-aware encoder; if that fails, the
- *     entry still registers (unblocking compilation) but the resulting
- *     APK's layout may not render correctly until that's fixed — this
- *     is the most likely piece to need follow-up iteration.
+ *     register id resources too. Layout content is copied through as
+ *     literal text, not real binary-encoded XML — the resulting APK's
+ *     layouts may not render correctly until that's added.
  *   - drawable/mipmap raw images (png etc.): registered as file
  *     resources, copied through as-is, no encoding needed.
  *   - NOT yet handled: styles/themes with parent inheritance, resource
  *     qualifiers (only default/no-qualifier folders), menu/anim/
- *     animator specifics beyond generic XML, vector drawables.
+ *     animator specifics beyond generic XML, vector drawables, attr/
+ *     styleable resources (needed for custom view XML attributes).
  */
 object ResourceCompiler {
 
@@ -55,7 +71,8 @@ object ResourceCompiler {
     fun compileResources(
         projectRoot: File,
         frameworkApkFile: File?,
-        packageName: String
+        packageName: String,
+        libraries: List<ResourceSource> = emptyList()
     ): ResourceCompileResult {
         val log = StringBuilder()
         // Recursive search, not a direct File(projectRoot, "res") lookup:
@@ -64,9 +81,15 @@ object ResourceCompiler {
         // content — including res/ — under app/src/main/res/, not at the
         // opened project root directly. Source file scanning already
         // searches recursively for exactly this reason.
-        val resDir = projectRoot.walkTopDown()
+        val appResDir = projectRoot.walkTopDown()
             .firstOrNull { it.isDirectory && it.name == "res" && !it.path.contains("/build/") }
-        if (resDir == null) {
+
+        val sources = buildList {
+            if (appResDir != null) add(ResourceSource(packageName, appResDir))
+            addAll(libraries)
+        }
+
+        if (sources.isEmpty()) {
             return ResourceCompileResult(
                 success = true,
                 rawOutput = "No res/ folder found — nothing to compile, skipping."
@@ -75,26 +98,27 @@ object ResourceCompiler {
         if (frameworkApkFile == null || !frameworkApkFile.exists()) {
             return ResourceCompileResult(
                 success = false,
-                rawOutput = "This project has a res/ folder but no framework resources have " +
+                rawOutput = "This project has resources to compile but no framework resources have " +
                     "been imported. Use \"Import Framework Resources\" (a real framework-res.apk, " +
                     "e.g. via: adb pull /system/framework/framework-res.apk)."
             )
         }
 
         return try {
-            val framework = FrameworkApk.loadApkFile(frameworkApkFile)
+            FrameworkApk.loadApkFile(frameworkApkFile)
             log.appendLine("Loaded framework resources: ${frameworkApkFile.name}")
 
             val tableBlock = TableBlock()
             val packageBlock = tableBlock.newPackage(0x7f, packageName)
-
-            // type -> (name -> resource id), used both to avoid duplicate
-            // entries and to generate the R class afterward.
-            val registry = mutableMapOf<String, MutableMap<String, Int>>()
             val fileResources = mutableMapOf<String, File>()
 
-            fun register(type: String, name: String) = run {
-                val existing = registry.getOrPut(type) { mutableMapOf() }
+            // pkg -> type -> (name -> resource id); used both to avoid
+            // duplicate entries and to generate one R class per package.
+            val registry = mutableMapOf<String, MutableMap<String, MutableMap<String, Int>>>()
+
+            fun register(pkg: String, type: String, name: String) = run {
+                val forPkg = registry.getOrPut(pkg) { mutableMapOf() }
+                val existing = forPkg.getOrPut(type) { mutableMapOf() }
                 if (existing.containsKey(name)) {
                     null
                 } else {
@@ -104,103 +128,114 @@ object ResourceCompiler {
                 }
             }
 
-            // --- values/*.xml: string, color, dimen, bool, integer ---
-            resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
-                valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
-                    try {
-                        val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlFile)
-                        val root = doc.documentElement
-                        val children = root.childNodes
-                        for (i in 0 until children.length) {
-                            val node = children.item(i)
-                            if (node !is Element) continue
-                            val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
-                            val name = node.getAttribute("name")
-                            if (name.isBlank()) continue
-                            val textValue = node.textContent ?: ""
-                            register(resType, name)?.setValueAsString(textValue)
-                        }
-                    } catch (e: Exception) {
-                        log.appendLine("Warning: failed to parse ${xmlFile.path}: ${e.message}")
-                    }
-                }
-            }
-            log.appendLine("Registered value resources: " + registry.entries.joinToString { "${it.key}=${it.value.size}" })
+            for (source in sources) {
+                val resDir = source.resDir
+                val pkg = source.packageName
 
-            // --- layout/menu/anim/xml folders: file resources + @+id scan ---
-            resDir.listFiles { f -> f.isDirectory }?.forEach { typeDir ->
-                val baseType = typeDir.name.substringBefore("-")
-                if (typeDir.name.startsWith("values")) return@forEach // already handled above
-                typeDir.listFiles { f -> f.isFile }?.forEach { resFile ->
-                    val entryName = resFile.nameWithoutExtension
-                    val apkPath = "res/${typeDir.name}/${resFile.name}"
-
-                    register(baseType, entryName)?.setValueAsString(apkPath)
-                    fileResources[apkPath] = resFile
-
-                    // Scan XML-based resources (layouts especially) for
-                    // @+id/foo declarations, which implicitly declare new
-                    // id-type resources not listed anywhere in values/.
-                    if (resFile.extension == "xml") {
+                // --- values/*.xml: string, color, dimen, bool, integer ---
+                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
+                    valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
-                            val content = resFile.readText()
-                            ID_ATTR_REGEX.findAll(content).forEach { match ->
-                                val idName = match.groupValues[1]
-                                register("id", idName)?.setValueAsString(idName)
+                            val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlFile)
+                            val children = doc.documentElement.childNodes
+                            for (i in 0 until children.length) {
+                                val node = children.item(i)
+                                if (node !is Element) continue
+                                val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
+                                val name = node.getAttribute("name")
+                                if (name.isBlank()) continue
+                                val textValue = node.textContent ?: ""
+                                register(pkg, resType, name)?.setValueAsString(textValue)
                             }
                         } catch (e: Exception) {
-                            log.appendLine("Warning: failed to scan ids in ${resFile.path}: ${e.message}")
+                            log.appendLine("Warning: failed to parse ${xmlFile.path}: ${e.message}")
                         }
                     }
                 }
-            }
-            log.appendLine("Registered file + id resources: " + registry.entries.joinToString { "${it.key}=${it.value.size}" })
 
-            // --- Generate an R class alongside the project's own
-            // sources so the normal compile pass picks it up
-            // automatically. Language must match whichever compiler
-            // will actually run — a Kotlin-only project's compile never
-            // looks for .java files, so an R.java would be silently
-            // ignored and R.layout.xxx would stay unresolved anyway. ---
+                // --- layout/menu/anim/xml/drawable/mipmap: file resources + @+id scan ---
+                resDir.listFiles { f -> f.isDirectory }?.forEach { typeDir ->
+                    if (typeDir.name.startsWith("values")) return@forEach // already handled above
+                    val baseType = typeDir.name.substringBefore("-")
+                    typeDir.listFiles { f -> f.isFile }?.forEach { resFile ->
+                        val entryName = resFile.nameWithoutExtension
+                        // Namespaced by package so the same file-name
+                        // pattern from different libraries doesn't
+                        // collide in the final APK.
+                        val apkPath = "res/${pkg.replace('.', '_')}/${typeDir.name}/${resFile.name}"
+
+                        register(pkg, baseType, entryName)?.setValueAsString(apkPath)
+                        fileResources[apkPath] = resFile
+
+                        // Scan XML-based resources (layouts especially) for
+                        // @+id/foo declarations, which implicitly declare new
+                        // id-type resources not listed anywhere in values/.
+                        if (resFile.extension == "xml") {
+                            try {
+                                val content = resFile.readText()
+                                ID_ATTR_REGEX.findAll(content).forEach { match ->
+                                    val idName = match.groupValues[1]
+                                    register(pkg, "id", idName)?.setValueAsString(idName)
+                                }
+                            } catch (e: Exception) {
+                                log.appendLine("Warning: failed to scan ids in ${resFile.path}: ${e.message}")
+                            }
+                        }
+                    }
+                }
+                log.appendLine(
+                    "Registered resources for $pkg: " +
+                        (registry[pkg]?.entries?.joinToString { "${it.key}=${it.value.size}" } ?: "none")
+                )
+            }
+
+            // --- Generate one R class per package, alongside the
+            // project's own sources so the normal compile pass picks
+            // them up automatically. Language must match whichever
+            // compiler will actually run for this project (Kotlin-only
+            // projects never look for .java files and vice versa, so
+            // every generated R class needs the same language). ---
             val isKotlinProject = projectRoot.walkTopDown()
                 .any { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
 
-            val rFile: File
-            val rSource: String
-            if (isKotlinProject) {
-                rSource = buildString {
-                    appendLine("package $packageName")
-                    appendLine()
-                    appendLine("object R {")
-                    for ((type, entries) in registry) {
-                        appendLine("    object $type {")
-                        for ((name, id) in entries) {
-                            appendLine("        const val $name = $id")
+            for ((pkg, typeMap) in registry) {
+                val rFile: File
+                val rSource: String
+                if (isKotlinProject) {
+                    rSource = buildString {
+                        appendLine("package $pkg")
+                        appendLine()
+                        appendLine("object R {")
+                        for ((type, entries) in typeMap) {
+                            appendLine("    object $type {")
+                            for ((name, id) in entries) {
+                                appendLine("        const val $name = $id")
+                            }
+                            appendLine("    }")
                         }
-                        appendLine("    }")
+                        appendLine("}")
                     }
-                    appendLine("}")
-                }
-                rFile = File(projectRoot, "build/generated/java/${packageName.replace('.', '/')}/R.kt")
-            } else {
-                rSource = buildString {
-                    appendLine("package $packageName;")
-                    appendLine()
-                    appendLine("public final class R {")
-                    for ((type, entries) in registry) {
-                        appendLine("    public static final class $type {")
-                        for ((name, id) in entries) {
-                            appendLine("        public static final int $name = $id;")
+                    rFile = File(projectRoot, "build/generated/java/${pkg.replace('.', '/')}/R.kt")
+                } else {
+                    rSource = buildString {
+                        appendLine("package $pkg;")
+                        appendLine()
+                        appendLine("public final class R {")
+                        for ((type, entries) in typeMap) {
+                            appendLine("    public static final class $type {")
+                            for ((name, id) in entries) {
+                                appendLine("        public static final int $name = $id;")
+                            }
+                            appendLine("    }")
                         }
-                        appendLine("    }")
+                        appendLine("}")
                     }
-                    appendLine("}")
+                    rFile = File(projectRoot, "build/generated/java/${pkg.replace('.', '/')}/R.java")
                 }
-                rFile = File(projectRoot, "build/generated/java/${packageName.replace('.', '/')}/R.java")
+                rFile.parentFile?.mkdirs()
+                rFile.writeText(rSource)
+                log.appendLine("Generated ${rFile.name} for $pkg: ${rFile.path}")
             }
-            rFile.parentFile?.mkdirs()
-            rFile.writeText(rSource)
-            log.appendLine("Generated ${rFile.name}: ${rFile.path}")
 
             ResourceCompileResult(
                 success = true,

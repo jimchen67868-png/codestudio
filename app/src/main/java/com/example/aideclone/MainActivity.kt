@@ -60,6 +60,22 @@ class MainActivity : AppCompatActivity() {
     private fun importedLibraryJars(): List<File> =
         libraryJarsDir.listFiles { f -> f.extension == "jar" }?.toList() ?: emptyList()
 
+    // Library resources: when a .aar (not just a plain .jar) is imported,
+    // its bundled res/ folder gets extracted here, one subfolder per
+    // library, alongside a .package file recording its package name
+    // (parsed from the AAR's own AndroidManifest.xml) — needed so
+    // ResourceCompiler can generate a matching R class for that library.
+    private val libraryResDir: File by lazy { File(filesDir, "sdk/libs-res").apply { mkdirs() } }
+    private fun importedLibraryResources(): List<com.example.aideclone.compiler.ResourceSource> {
+        val dirs = libraryResDir.listFiles { f -> f.isDirectory } ?: return emptyList()
+        return dirs.mapNotNull { dir ->
+            val pkgFile = File(dir, ".package")
+            if (!pkgFile.exists()) return@mapNotNull null
+            val pkg = pkgFile.readText().trim()
+            if (pkg.isEmpty()) null else com.example.aideclone.compiler.ResourceSource(pkg, dir)
+        }
+    }
+
     // Bundled at build time (see app/build.gradle.kts' bundleKotlinStdlib
     // task) as an asset, extracted to a real file here on first use since
     // the Kotlin compiler needs an actual classpath-usable jar, not an
@@ -254,7 +270,7 @@ class MainActivity : AppCompatActivity() {
                 // "Import Framework Resources").
                 val fw = if (frameworkApkFile.exists()) frameworkApkFile else null
                 val resResult = com.example.aideclone.compiler.ResourceCompiler.compileResources(
-                    project.rootDir, fw, project.packageName
+                    project.rootDir, fw, project.packageName, importedLibraryResources()
                 )
                 if (!resResult.success) {
                     runOnUiThread {
@@ -346,7 +362,8 @@ class MainActivity : AppCompatActivity() {
                         appName = project.appName,
                         signingStorageDir = signingDir,
                         extraLibraries = importedLibraryJars(),
-                        frameworkApkFile = if (frameworkApkFile.exists()) frameworkApkFile else null
+                        frameworkApkFile = if (frameworkApkFile.exists()) frameworkApkFile else null,
+                        libraryResources = importedLibraryResources()
                     )
 
                     runOnUiThread {
@@ -499,6 +516,60 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Extracts an AAR: classes.jar goes to the normal library jars pool
+     * (unchanged from before — used for dexing/classpath), but ALSO
+     * pulls out res/ (the library's own bundled resources) and reads
+     * its AndroidManifest.xml for the library's package name, needed so
+     * ResourceCompiler can generate a matching R class for it. Without
+     * this, libraries with internal resource dependencies (which is most
+     * AndroidX libraries) crash at runtime with ClassNotFoundException
+     * for their own R class, even though their code compiles fine.
+     */
+    private fun importAarLibrary(uri: Uri, displayName: String) {
+        val baseName = displayName.removeSuffix(".aar")
+        val tempAar = File(cacheDir, "$baseName-import.aar")
+        contentResolver.openInputStream(uri)?.use { input ->
+            tempAar.outputStream().use { output -> input.copyTo(output) }
+        }
+
+        java.util.zip.ZipFile(tempAar).use { zip ->
+            // classes.jar -> normal library jars pool.
+            zip.getEntry("classes.jar")?.let { entry ->
+                zip.getInputStream(entry).use { input ->
+                    File(libraryJarsDir, "$baseName.jar").outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+
+            // AndroidManifest.xml -> package name (a plain text attribute
+            // in AAR manifests, unlike the binary one in a built APK).
+            val packageName = zip.getEntry("AndroidManifest.xml")?.let { entry ->
+                zip.getInputStream(entry).use { input ->
+                    val text = input.readBytes().toString(Charsets.UTF_8)
+                    Regex("""package\s*=\s*"([^"]+)"""").find(text)?.groupValues?.get(1)
+                }
+            }
+
+            // res/ -> extracted to sdk/libs-res/<baseName>/, alongside a
+            // .package marker file recording the package name above.
+            val entriesUnderRes = zip.entries().asSequence().filter { it.name.startsWith("res/") && !it.isDirectory }
+            if (packageName != null && entriesUnderRes.any()) {
+                val libResDir = File(libraryResDir, baseName)
+                libResDir.mkdirs()
+                for (entry in entriesUnderRes) {
+                    val relativePath = entry.name.removePrefix("res/")
+                    val outFile = File(libResDir, relativePath)
+                    outFile.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        outFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+                File(libResDir, ".package").writeText(packageName)
+            }
+        }
+        tempAar.delete()
+    }
+
     private fun importLibraryJars(uris: List<Uri>) {
         Toast.makeText(this, "Importing ${uris.size} librar${if (uris.size == 1) "y" else "ies"}…", Toast.LENGTH_SHORT).show()
         backgroundExecutor.execute {
@@ -506,11 +577,15 @@ class MainActivity : AppCompatActivity() {
             val failures = mutableListOf<String>()
             for (uri in uris) {
                 try {
-                    val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}.jar"
-                    val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
-                    val destFile = File(libraryJarsDir, safeName)
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        destFile.outputStream().use { output -> input.copyTo(output) }
+                    val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}"
+                    if (displayName.endsWith(".aar")) {
+                        importAarLibrary(uri, displayName)
+                    } else {
+                        val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
+                        val destFile = File(libraryJarsDir, safeName)
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            destFile.outputStream().use { output -> input.copyTo(output) }
+                        }
                     }
                     successCount++
                 } catch (e: Exception) {
