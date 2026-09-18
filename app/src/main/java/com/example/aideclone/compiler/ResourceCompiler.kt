@@ -158,7 +158,19 @@ object ResourceCompiler {
                     if (typeDir.name.startsWith("values")) return@forEach // already handled above
                     val baseType = typeDir.name.substringBefore("-")
                     typeDir.listFiles { f -> f.isFile }?.forEach { resFile ->
-                        val entryName = resFile.nameWithoutExtension
+                        // Nine-patch drawables (foo.9.png) have a
+                        // compound extension - nameWithoutExtension only
+                        // strips the trailing ".png", leaving ".9" in
+                        // the identifier (e.g. "foo.9"), which isn't
+                        // valid Kotlin/Java and breaks the whole
+                        // generated R file's compile. Real aapt treats
+                        // ".9.png" as one unit when deriving the
+                        // resource name, same as here.
+                        val entryName = if (resFile.name.endsWith(".9.png")) {
+                            resFile.name.removeSuffix(".9.png")
+                        } else {
+                            resFile.nameWithoutExtension
+                        }
                         // Namespaced by package so the same file-name
                         // pattern from different libraries doesn't
                         // collide in the final APK.
