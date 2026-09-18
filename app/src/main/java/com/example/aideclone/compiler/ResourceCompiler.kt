@@ -68,6 +68,19 @@ object ResourceCompiler {
 
     private val ID_ATTR_REGEX = Regex("""@\+?id/([A-Za-z_][A-Za-z0-9_]*)""")
 
+    /**
+     * Resource names aren't always valid identifiers as-is - style names
+     * in particular conventionally use literal dots as a hierarchy
+     * separator (e.g. "Theme.AppCompat.Light.DarkActionBar"), which is a
+     * perfectly valid resource name but breaks Kotlin/Java syntax if
+     * emitted verbatim as a field name (`const val Theme.AppCompat...`
+     * parses as a dotted reference, not a declaration). Real aapt
+     * replaces '.' with '_' when generating R fields for exactly this
+     * reason, so field names and resource names diverge for styles by
+     * design - that's expected, not a bug.
+     */
+    private fun sanitizeIdentifier(name: String): String = name.replace('.', '_').replace(':', '_')
+
     fun compileResources(
         projectRoot: File,
         frameworkApkFile: File?,
@@ -254,7 +267,7 @@ object ResourceCompiler {
                         for ((type, entries) in typeMap) {
                             appendLine("    object $type {")
                             for ((name, id) in entries) {
-                                appendLine("        const val $name = $id")
+                                appendLine("        const val ${sanitizeIdentifier(name)} = $id")
                             }
                             appendLine("    }")
                         }
@@ -269,7 +282,7 @@ object ResourceCompiler {
                         for ((type, entries) in typeMap) {
                             appendLine("    public static final class $type {")
                             for ((name, id) in entries) {
-                                appendLine("        public static final int $name = $id;")
+                                appendLine("        public static final int ${sanitizeIdentifier(name)} = $id;")
                             }
                             appendLine("    }")
                         }
