@@ -3,8 +3,12 @@ package com.example.aideclone.compiler
 import com.reandroid.apk.FrameworkApk
 import com.reandroid.arsc.chunk.PackageBlock
 import com.reandroid.arsc.chunk.TableBlock
+import com.reandroid.arsc.chunk.xml.ResXmlDocument
+import com.reandroid.xml.kxml2.KXmlParser
 import org.w3c.dom.Element
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
+import java.io.FileInputStream
 import javax.xml.parsers.DocumentBuilderFactory
 
 data class ResourceCompileResult(
@@ -223,7 +227,46 @@ object ResourceCompiler {
                         val apkPath = "res/${pkg.replace('.', '_')}/${typeDir.name}/${resFile.name}"
 
                         register(pkg, baseType, entryName)?.setValueAsString(apkPath)
-                        fileResources[apkPath] = resFile
+
+                        // Android's resource loader only accepts XML-type
+                        // file resources (layouts, vector drawables,
+                        // menus, animators, xml/) in compiled binary
+                        // form - a raw text copy throws
+                        // FileNotFoundException("Corrupt XML binary
+                        // file") at runtime the moment anything tries to
+                        // inflate it. Compile via ARSCLib's own
+                        // ResXmlDocument against the same packageBlock
+                        // used for R generation, so @+id/@drawable/etc
+                        // references in the XML resolve to the IDs we
+                        // just assigned above.
+                        if (resFile.extension == "xml") {
+                            try {
+                                val compiledFile = File(projectRoot, "build/compiled-res/$apkPath")
+                                compiledFile.parentFile?.mkdirs()
+                                val parser = KXmlParser()
+                                parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+                                FileInputStream(resFile).use { input ->
+                                    parser.setInput(input, null)
+                                    val xmlDoc = ResXmlDocument()
+                                    xmlDoc.setPackageBlock(packageBlock)
+                                    xmlDoc.parse(parser)
+                                    xmlDoc.writeBytes(compiledFile)
+                                }
+                                fileResources[apkPath] = compiledFile
+                            } catch (e: Exception) {
+                                // Fall back to the raw file rather than
+                                // failing the whole build - it'll still
+                                // throw at runtime if this specific
+                                // resource is ever loaded, but everything
+                                // else keeps working, and the log line
+                                // below tells us exactly which file and
+                                // why for the next round of fixes.
+                                log.appendLine("Warning: failed to compile binary XML for ${resFile.path}: ${e.message} - copying raw (will likely fail at runtime if loaded)")
+                                fileResources[apkPath] = resFile
+                            }
+                        } else {
+                            fileResources[apkPath] = resFile
+                        }
 
                         // Scan XML-based resources (layouts especially) for
                         // @+id/foo declarations, which implicitly declare new
