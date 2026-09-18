@@ -132,7 +132,13 @@ object ResourceCompiler {
                 val resDir = source.resDir
                 val pkg = source.packageName
 
-                // --- values/*.xml: string, color, dimen, bool, integer ---
+                // --- values/*.xml: string, color, dimen, bool, integer,
+                // plus style/attr (registered as IDs only - no attempt
+                // to encode parent inheritance or item content yet, just
+                // enough for R.style.xxx / R.attr.xxx to resolve instead
+                // of throwing ClassNotFoundException/NoClassDefFoundError
+                // at runtime for code, like AppCompatDelegateImpl, that
+                // reads its own R$style fields) ---
                 resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
                     valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
@@ -141,11 +147,38 @@ object ResourceCompiler {
                             for (i in 0 until children.length) {
                                 val node = children.item(i)
                                 if (node !is Element) continue
-                                val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
-                                val name = node.getAttribute("name")
-                                if (name.isBlank()) continue
-                                val textValue = node.textContent ?: ""
-                                register(pkg, resType, name)?.setValueAsString(textValue)
+                                when (node.tagName) {
+                                    "style" -> {
+                                        val name = node.getAttribute("name")
+                                        if (name.isNotBlank()) register(pkg, "style", name)
+                                    }
+                                    "attr" -> {
+                                        val name = node.getAttribute("name")
+                                        if (name.isNotBlank()) register(pkg, "attr", name)
+                                    }
+                                    "declare-styleable" -> {
+                                        // Nested <attr> children declare
+                                        // custom view XML attributes
+                                        // (e.g. app:showAsAction) - same
+                                        // R.attr.xxx namespace as
+                                        // top-level <attr>, just declared
+                                        // inline here instead.
+                                        val attrNodes = node.childNodes
+                                        for (j in 0 until attrNodes.length) {
+                                            val attrNode = attrNodes.item(j)
+                                            if (attrNode !is Element || attrNode.tagName != "attr") continue
+                                            val attrName = attrNode.getAttribute("name")
+                                            if (attrName.isNotBlank()) register(pkg, "attr", attrName)
+                                        }
+                                    }
+                                    else -> {
+                                        val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
+                                        val name = node.getAttribute("name")
+                                        if (name.isBlank()) continue
+                                        val textValue = node.textContent ?: ""
+                                        register(pkg, resType, name)?.setValueAsString(textValue)
+                                    }
+                                }
                             }
                         } catch (e: Exception) {
                             log.appendLine("Warning: failed to parse ${xmlFile.path}: ${e.message}")
