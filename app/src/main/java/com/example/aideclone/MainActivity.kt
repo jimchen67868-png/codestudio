@@ -552,8 +552,10 @@ class MainActivity : AppCompatActivity() {
 
             // res/ -> extracted to sdk/libs-res/<baseName>/, alongside a
             // .package marker file recording the package name above.
-            val entriesUnderRes = zip.entries().asSequence().filter { it.name.startsWith("res/") && !it.isDirectory }
-            if (packageName != null && entriesUnderRes.any()) {
+            val entriesUnderRes = zip.entries().asSequence()
+                .filter { it.name.startsWith("res/") && !it.isDirectory }
+                .toList()
+            if (packageName != null && entriesUnderRes.isNotEmpty()) {
                 val libResDir = File(libraryResDir, baseName)
                 libResDir.mkdirs()
                 for (entry in entriesUnderRes) {
