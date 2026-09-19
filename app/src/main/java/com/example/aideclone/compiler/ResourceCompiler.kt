@@ -188,6 +188,23 @@ object ResourceCompiler {
                                         val name = node.getAttribute("name")
                                         if (name.isNotBlank()) register(pkg, "attr", name)
                                     }
+                                    "item" -> {
+                                        // Generic <item name="..." type="...">
+                                        // form - an alternative to a
+                                        // type-named tag, most commonly
+                                        // used for id resources with no
+                                        // value at all, e.g.
+                                        // <item name="view_tree_lifecycle_owner" type="id"/>
+                                        // (exactly what androidx.lifecycle
+                                        // -runtime's ids.xml consists of).
+                                        val itemType = node.getAttribute("type")
+                                        val name = node.getAttribute("name")
+                                        if (itemType.isNotBlank() && name.isNotBlank()) {
+                                            val textValue = node.textContent ?: ""
+                                            val entry = register(pkg, itemType, name)
+                                            if (textValue.isNotBlank()) entry?.setValueAsString(textValue)
+                                        }
+                                    }
                                     "declare-styleable" -> {
                                         // Nested <attr> children declare
                                         // custom view XML attributes
