@@ -140,6 +140,14 @@ object ResourceCompiler {
             // duplicate entries and to generate one R class per package.
             val registry = mutableMapOf<String, MutableMap<String, MutableMap<String, Int>>>()
 
+            // pkg -> styleable name -> ordered attr names. R.styleable
+            // isn't a real resources.arsc entry at all - it's a
+            // compile-time-only int[] of attr IDs (plus per-attr index
+            // constants) that real aapt generates purely for the R
+            // class. Tracked separately here and emitted after the main
+            // registry loop, once every attr's real numeric ID is known.
+            val styleables = mutableMapOf<String, MutableMap<String, MutableList<String>>>()
+
             fun register(pkg: String, type: String, name: String) = run {
                 val forPkg = registry.getOrPut(pkg) { mutableMapOf() }
                 val existing = forPkg.getOrPut(type) { mutableMapOf() }
@@ -187,12 +195,20 @@ object ResourceCompiler {
                                         // R.attr.xxx namespace as
                                         // top-level <attr>, just declared
                                         // inline here instead.
+                                        val styleableName = node.getAttribute("name")
+                                        val attrNames = mutableListOf<String>()
                                         val attrNodes = node.childNodes
                                         for (j in 0 until attrNodes.length) {
                                             val attrNode = attrNodes.item(j)
                                             if (attrNode !is Element || attrNode.tagName != "attr") continue
                                             val attrName = attrNode.getAttribute("name")
-                                            if (attrName.isNotBlank()) register(pkg, "attr", attrName)
+                                            if (attrName.isNotBlank()) {
+                                                register(pkg, "attr", attrName)
+                                                attrNames.add(attrName)
+                                            }
+                                        }
+                                        if (styleableName.isNotBlank() && attrNames.isNotEmpty()) {
+                                            styleables.getOrPut(pkg) { mutableMapOf() }[styleableName] = attrNames
                                         }
                                     }
                                     else -> {
@@ -307,6 +323,13 @@ object ResourceCompiler {
                 .any { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
 
             for ((pkg, typeMap) in registry) {
+                val pkgAttrIds = typeMap["attr"] ?: emptyMap()
+                val pkgStyleables = styleables[pkg]
+
+                fun sortedStyleableAttrs(attrNames: List<String>): List<Pair<String, Int>> =
+                    attrNames.mapNotNull { name -> pkgAttrIds[name]?.let { id -> name to id } }
+                        .sortedBy { it.second }
+
                 val rFile: File
                 val rSource: String
                 if (isKotlinProject) {
@@ -318,6 +341,18 @@ object ResourceCompiler {
                             appendLine("    object $type {")
                             for ((name, id) in entries) {
                                 appendLine("        const val ${sanitizeIdentifier(name)} = $id")
+                            }
+                            appendLine("    }")
+                        }
+                        if (pkgStyleables != null) {
+                            appendLine("    object styleable {")
+                            for ((styleableName, attrNames) in pkgStyleables) {
+                                val sorted = sortedStyleableAttrs(attrNames)
+                                val safeName = sanitizeIdentifier(styleableName)
+                                appendLine("        val $safeName = intArrayOf(${sorted.joinToString(", ") { it.second.toString() }})")
+                                sorted.forEachIndexed { index, (attrName, _) ->
+                                    appendLine("        const val ${safeName}_${sanitizeIdentifier(attrName)} = $index")
+                                }
                             }
                             appendLine("    }")
                         }
@@ -333,6 +368,18 @@ object ResourceCompiler {
                             appendLine("    public static final class $type {")
                             for ((name, id) in entries) {
                                 appendLine("        public static final int ${sanitizeIdentifier(name)} = $id;")
+                            }
+                            appendLine("    }")
+                        }
+                        if (pkgStyleables != null) {
+                            appendLine("    public static final class styleable {")
+                            for ((styleableName, attrNames) in pkgStyleables) {
+                                val sorted = sortedStyleableAttrs(attrNames)
+                                val safeName = sanitizeIdentifier(styleableName)
+                                appendLine("        public static final int[] $safeName = { ${sorted.joinToString(", ") { it.second.toString() }} };")
+                                sorted.forEachIndexed { index, (attrName, _) ->
+                                    appendLine("        public static final int ${safeName}_${sanitizeIdentifier(attrName)} = $index;")
+                                }
                             }
                             appendLine("    }")
                         }
