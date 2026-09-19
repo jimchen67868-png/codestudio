@@ -315,6 +315,26 @@ object ResourceCompiler {
                 )
             }
 
+            // Sanity check for the diff-by-new-resourceId approach above:
+            // it assumes every resource XmlCoder.VALUES_XML.encode()
+            // touches gets a newly minted resourceId. That holds for the
+            // ordinary case, but if encode() ever updates an existing
+            // entry in place instead - a behavior detail no amount of
+            // javap can confirm, only real runs can - that update would
+            // be silently invisible to the diff rather than causing a
+            // loud, obvious failure. This at least surfaces the gap in
+            // the log instead of leaving it silent.
+            val registryTotal = registry.values.sumOf { typeMap -> typeMap.values.sumOf { it.size } }
+            val actualTotal = packageBlock.getResources().asSequence().count()
+            if (registryTotal != actualTotal) {
+                log.appendLine(
+                    "Warning: registry tracked $registryTotal resource(s) but the table actually " +
+                        "has $actualTotal - some entries may be missing from generated R classes " +
+                        "even though they exist in the compiled resources.arsc. If a resource that " +
+                        "should exist still throws at runtime, this is where to look next."
+                )
+            }
+
             // --- Generate one R class per package, alongside the
             // project's own sources so the normal compile pass picks
             // them up automatically. Language must match whichever
