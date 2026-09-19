@@ -349,7 +349,7 @@ object ResourceCompiler {
                             for ((styleableName, attrNames) in pkgStyleables) {
                                 val sorted = sortedStyleableAttrs(attrNames)
                                 val safeName = sanitizeIdentifier(styleableName)
-                                appendLine("        val $safeName = intArrayOf(${sorted.joinToString(", ") { it.second.toString() }})")
+                                appendLine("        @JvmField val $safeName = intArrayOf(${sorted.joinToString(", ") { it.second.toString() }})")
                                 sorted.forEachIndexed { index, (attrName, _) ->
                                     appendLine("        const val ${safeName}_${sanitizeIdentifier(attrName)} = $index")
                                 }
