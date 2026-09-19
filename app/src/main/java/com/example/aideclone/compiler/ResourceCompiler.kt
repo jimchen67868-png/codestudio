@@ -4,6 +4,7 @@ import com.reandroid.apk.FrameworkApk
 import com.reandroid.arsc.chunk.PackageBlock
 import com.reandroid.arsc.chunk.TableBlock
 import com.reandroid.arsc.chunk.xml.ResXmlDocument
+import com.reandroid.arsc.coder.xml.XmlCoder
 import com.reandroid.xml.kxml2.KXmlParser
 import org.w3c.dom.Element
 import org.xmlpull.v1.XmlPullParser
@@ -170,13 +171,23 @@ object ResourceCompiler {
                 val resDir = source.resDir
                 val pkg = source.packageName
 
-                // --- values/*.xml: string, color, dimen, bool, integer,
-                // plus style/attr (registered as IDs only - no attempt
-                // to encode parent inheritance or item content yet, just
-                // enough for R.style.xxx / R.attr.xxx to resolve instead
-                // of throwing ClassNotFoundException/NoClassDefFoundError
-                // at runtime for code, like AppCompatDelegateImpl, that
-                // reads its own R$style fields) ---
+                // --- values/*.xml ---
+                // Content (styles with real parent inheritance and
+                // <item> values, arrays, plurals, attrs, ids, etc.) is
+                // encoded by ARSCLib's own values.xml encoder rather
+                // than hand-parsed here - our own DOM-based parsing kept
+                // discovering yet another declaration form it didn't
+                // handle (generic <item type=...>, dedicated <id/>, and
+                // it never encoded style parent/item content at all).
+                // XmlCoder.VALUES_XML is the same encoder real tools use
+                // to rebuild resources.arsc from decompiled source, so
+                // it already handles every form correctly.
+                //
+                // R.styleable has no resources.arsc representation at
+                // all - real aapt generates it purely from the source
+                // <declare-styleable> declaration, discarded after
+                // compilation - so that grouping still has to be scanned
+                // for ourselves, separately from content encoding.
                 resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
                     valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
@@ -184,67 +195,35 @@ object ResourceCompiler {
                             val children = doc.documentElement.childNodes
                             for (i in 0 until children.length) {
                                 val node = children.item(i)
-                                if (node !is Element) continue
-                                when (node.tagName) {
-                                    "style" -> {
-                                        val name = node.getAttribute("name")
-                                        if (name.isNotBlank()) register(pkg, "style", name)
-                                    }
-                                    "attr" -> {
-                                        val name = node.getAttribute("name")
-                                        if (name.isNotBlank()) register(pkg, "attr", name)
-                                    }
-                                    "item" -> {
-                                        // Generic <item name="..." type="...">
-                                        // form - an alternative to a
-                                        // type-named tag, most commonly
-                                        // used for id resources with no
-                                        // value at all, e.g.
-                                        // <item name="view_tree_lifecycle_owner" type="id"/>
-                                        // (exactly what androidx.lifecycle
-                                        // -runtime's ids.xml consists of).
-                                        val itemType = node.getAttribute("type")
-                                        val name = node.getAttribute("name")
-                                        if (itemType.isNotBlank() && name.isNotBlank()) {
-                                            val textValue = node.textContent ?: ""
-                                            val entry = register(pkg, itemType, name)
-                                            if (textValue.isNotBlank()) entry?.setValueAsString(textValue)
-                                        }
-                                    }
-                                    "declare-styleable" -> {
-                                        // Nested <attr> children declare
-                                        // custom view XML attributes
-                                        // (e.g. app:showAsAction) - same
-                                        // R.attr.xxx namespace as
-                                        // top-level <attr>, just declared
-                                        // inline here instead.
-                                        val styleableName = node.getAttribute("name")
-                                        val attrNames = mutableListOf<String>()
-                                        val attrNodes = node.childNodes
-                                        for (j in 0 until attrNodes.length) {
-                                            val attrNode = attrNodes.item(j)
-                                            if (attrNode !is Element || attrNode.tagName != "attr") continue
-                                            val attrName = attrNode.getAttribute("name")
-                                            if (attrName.isNotBlank()) {
-                                                register(pkg, "attr", attrName)
-                                                attrNames.add(attrName)
-                                            }
-                                        }
-                                        if (styleableName.isNotBlank() && attrNames.isNotEmpty()) {
-                                            styleables.getOrPut(pkg) { mutableMapOf() }[styleableName] = attrNames
-                                        }
-                                    }
-                                    else -> {
-                                        val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
-                                        val name = node.getAttribute("name")
-                                        if (name.isBlank()) continue
-                                        val textValue = node.textContent ?: ""
-                                        register(pkg, resType, name)?.setValueAsString(textValue)
-                                    }
+                                if (node !is Element || node.tagName != "declare-styleable") continue
+                                val styleableName = node.getAttribute("name")
+                                val attrNames = mutableListOf<String>()
+                                val attrNodes = node.childNodes
+                                for (j in 0 until attrNodes.length) {
+                                    val attrNode = attrNodes.item(j)
+                                    if (attrNode !is Element || attrNode.tagName != "attr") continue
+                                    val attrName = attrNode.getAttribute("name")
+                                    if (attrName.isNotBlank()) attrNames.add(attrName)
+                                }
+                                if (styleableName.isNotBlank() && attrNames.isNotEmpty()) {
+                                    styleables.getOrPut(pkg) { mutableMapOf() }[styleableName] = attrNames
                                 }
                             }
                         } catch (e: Exception) {
-                            log.appendLine("Warning: failed to parse ${xmlFile.path}: ${e.message}")
+                            log.appendLine("Warning: failed to scan declare-styleable in ${xmlFile.path}: ${e.message}")
+                        }
+
+                        try {
+                            val before = packageBlock.getResources().asSequence().map { it.resourceId }.toHashSet()
+                            XmlCoder.getInstance().VALUES_XML.encode(xmlFile, packageBlock)
+                            packageBlock.getResources().asSequence()
+                                .filter { it.resourceId !in before }
+                                .forEach { entry ->
+                                    registry.getOrPut(pkg) { mutableMapOf() }
+                                        .getOrPut(entry.type) { mutableMapOf() }[entry.name] = entry.resourceId
+                                }
+                        } catch (e: Exception) {
+                            log.appendLine("Warning: failed to encode values from ${xmlFile.path}: ${e.message}")
                         }
                     }
                 }
