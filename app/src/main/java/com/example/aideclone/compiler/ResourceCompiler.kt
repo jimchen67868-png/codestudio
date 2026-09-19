@@ -122,10 +122,17 @@ object ResourceCompiler {
         }
 
         return try {
-            FrameworkApk.loadApkFile(frameworkApkFile)
+            val frameworkApk = FrameworkApk.loadApkFile(frameworkApkFile)
             log.appendLine("Loaded framework resources: ${frameworkApkFile.name}")
 
             val tableBlock = TableBlock()
+            // Without this, ARSCLib has no framework to resolve
+            // android:-namespaced attributes or @android:/?android:attr/
+            // references against during XML encoding below - every
+            // single one fails with "Unknown attribute name" or
+            // "Resource not found for" otherwise, regardless of how
+            // correct the encoding call itself is.
+            tableBlock.addFramework(frameworkApk.tableBlock)
             val packageBlock = tableBlock.newPackage(0x7f, packageName)
             val fileResources = mutableMapOf<String, File>()
 
