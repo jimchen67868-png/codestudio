@@ -67,7 +67,13 @@ object ResourceCompiler {
         "color" to "color",
         "dimen" to "dimen",
         "bool" to "bool",
-        "integer" to "integer"
+        "integer" to "integer",
+        // Dedicated self-closing tag for id resources with no value at
+        // all, e.g. <id name="view_tree_lifecycle_owner"/> - distinct
+        // from the generic <item name=... type="id"/> form (handled
+        // separately below) and from every other value type, which all
+        // carry actual text content. Real aapt accepts both forms.
+        "id" to "id"
     )
 
     private val ID_ATTR_REGEX = Regex("""@\+?id/([A-Za-z_][A-Za-z0-9_]*)""")
