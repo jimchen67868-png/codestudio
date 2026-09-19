@@ -305,7 +305,9 @@ class MainActivity : AppCompatActivity() {
                 // editor lets you actually read and copy the whole thing.
                 try {
                     File(project.rootDir, "build").mkdirs()
-                    File(project.rootDir, "build/compile-log.txt").writeText(result.rawOutput)
+                    File(project.rootDir, "build/compile-log.txt").writeText(
+                        "--- Resource compilation ---\n${resResult.rawOutput}\n\n--- ${if (hasKotlin) "Kotlin" else "Java"} compilation ---\n${result.rawOutput}"
+                    )
                 } catch (_: Exception) {
                     // Non-fatal: the dialog still shows the text either way.
                 }
