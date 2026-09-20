@@ -335,6 +335,36 @@ object ResourceCompiler {
                 )
             }
 
+            // Sanity check for the diff-by-new-resourceId approach above:
+            // it assumes every resource XmlCoder.VALUES_XML.encode()
+            // touches gets a newly minted resourceId. That holds for the
+            // ordinary case, but if encode() ever updates an existing
+            // entry in place instead - a behavior detail no amount of
+            // javap can confirm, only real runs can - that update would
+            // be silently invisible to the diff rather than causing a
+            // loud, obvious failure. Comparing actual ID sets (not just
+            // counts, which can mask a same-size mismatch - e.g.
+            // registry {A,B,C} vs table {A,B,D} - and give a false sense
+            // of correctness) at least surfaces a real gap in the log
+            // instead of leaving it silent. This can only ever prove a
+            // registry entry is missing, not that the diff-based
+            // attribution itself is correct.
+            val registryIds = registry.values
+                .flatMap { typeMap -> typeMap.values.flatMap { it.values } }
+                .toSet()
+            val actualIds = packageBlock.getResources().asSequence()
+                .map { it.resourceId }
+                .toSet()
+            val missingFromRegistry = actualIds - registryIds
+            if (missingFromRegistry.isNotEmpty()) {
+                log.appendLine(
+                    "Warning: ${missingFromRegistry.size} resource(s) exist in the compiled " +
+                        "resources.arsc but are missing from the generated R registry " +
+                        "(ids: $missingFromRegistry) - these will throw at runtime if referenced " +
+                        "even though the underlying resource data exists."
+                )
+            }
+
             // --- Generate one R class per package, alongside the
             // project's own sources so the normal compile pass picks
             // them up automatically. Language must match whichever
