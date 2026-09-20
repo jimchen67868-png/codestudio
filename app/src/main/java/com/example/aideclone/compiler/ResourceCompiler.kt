@@ -322,46 +322,42 @@ object ResourceCompiler {
             // entry in place instead - a behavior detail no amount of
             // javap can confirm, only real runs can - that update would
             // be silently invisible to the diff rather than causing a
-            // loud, obvious failure. This at least surfaces the gap in
-            // the log instead of leaving it silent.
-            val registryTotal = registry.values.sumOf { typeMap -> typeMap.values.sumOf { it.size } }
-            val actualTotal = packageBlock.getResources().asSequence().count()
-            if (registryTotal != actualTotal) {
-                log.appendLine(
-                    "Warning: registry tracked $registryTotal resource(s) but the table actually " +
-                        "has $actualTotal - some entries may be missing from generated R classes " +
-                        "even though they exist in the compiled resources.arsc. If a resource that " +
-                        "should exist still throws at runtime, this is where to look next."
-                )
-            }
-
-            // Sanity check for the diff-by-new-resourceId approach above:
-            // it assumes every resource XmlCoder.VALUES_XML.encode()
-            // touches gets a newly minted resourceId. That holds for the
-            // ordinary case, but if encode() ever updates an existing
-            // entry in place instead - a behavior detail no amount of
-            // javap can confirm, only real runs can - that update would
-            // be silently invisible to the diff rather than causing a
-            // loud, obvious failure. Comparing actual ID sets (not just
-            // counts, which can mask a same-size mismatch - e.g.
-            // registry {A,B,C} vs table {A,B,D} - and give a false sense
-            // of correctness) at least surfaces a real gap in the log
-            // instead of leaving it silent. This can only ever prove a
-            // registry entry is missing, not that the diff-based
-            // attribution itself is correct.
+            // loud, obvious failure.
+            //
+            // Comparing actual ID sets (not just counts, which can mask
+            // a same-size mismatch and give a false sense of
+            // correctness) surfaces a real gap - but packageBlock.
+            // getResources() might in principle enumerate more than
+            // just our own package's entries, and comparing against
+            // that unfiltered would risk false positives. A resource ID
+            // structurally encodes its package in the top byte
+            // regardless of what getResources() actually returns, so
+            // filtering to just our own package's ID rules that out by
+            // construction rather than by assumption. We use the same
+            // literal already assigned at packageBlock creation
+            // (tableBlock.newPackage(0x7f, ...) above) rather than
+            // reading it back via packageBlock.getId() - javap confirms
+            // that accessor exists, but not that its return value is
+            // specifically the package byte rather than something else
+            // internal to ARSCLib.
+            //
+            // This can still only ever prove a registry entry is
+            // missing, not that the diff-based attribution is correct.
+            val ourPackageId = 0x7f
             val registryIds = registry.values
                 .flatMap { typeMap -> typeMap.values.flatMap { it.values } }
                 .toSet()
             val actualIds = packageBlock.getResources().asSequence()
                 .map { it.resourceId }
+                .filter { (it ushr 24) == ourPackageId }
                 .toSet()
             val missingFromRegistry = actualIds - registryIds
             if (missingFromRegistry.isNotEmpty()) {
                 log.appendLine(
                     "Warning: ${missingFromRegistry.size} resource(s) exist in the compiled " +
-                        "resources.arsc but are missing from the generated R registry " +
-                        "(ids: $missingFromRegistry) - these will throw at runtime if referenced " +
-                        "even though the underlying resource data exists."
+                        "resources.arsc (in our own package ID range) but are missing from the " +
+                        "generated R registry (ids: $missingFromRegistry) - these will throw at " +
+                        "runtime if referenced even though the underlying resource data exists."
                 )
             }
 
