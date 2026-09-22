@@ -4,6 +4,10 @@ import com.reandroid.apk.FrameworkApk
 import com.reandroid.arsc.chunk.PackageBlock
 import com.reandroid.arsc.chunk.TableBlock
 import com.reandroid.arsc.chunk.xml.ResXmlDocument
+import com.reandroid.arsc.coder.EncodeResult
+import com.reandroid.arsc.coder.ValueCoder
+import com.reandroid.arsc.value.style.StyleBag
+import com.reandroid.arsc.value.style.StyleBagItem
 import com.reandroid.xml.kxml2.KXmlParser
 import org.w3c.dom.Element
 import org.xmlpull.v1.XmlPullParser
@@ -166,17 +170,79 @@ object ResourceCompiler {
                 }
             }
 
+            // Resolves a style's parent name (e.g. "Theme.MaterialComponents.DayNight.NoActionBar"
+            // or "android:Widget.Material.Spinner.Underlined") to its resource ID.
+            // Strips a leading "android:" since that's a namespace prefix,
+            // not part of the resource name itself; TableBlock.getResource()
+            // transparently falls through to the attached framework table
+            // when a name isn't found locally (confirmed by real builds
+            // resolving @android:/?android:attr/ references correctly once
+            // addFramework() was wired in), so no separate framework-specific
+            // lookup path is needed here — same mechanism, just verified for
+            // this specific case (parent-by-name) via an isolated round-trip
+            // test rather than assumed from that other evidence alone.
+            fun resolveStyleParent(rawParentName: String): Int? {
+                val name = rawParentName.removePrefix("android:")
+                return tableBlock.getResource(packageBlock, "style", name)?.resourceId
+            }
+
+            // Resolves an <item name="..."> attribute name to its resource ID.
+            // Same android: stripping as resolveStyleParent, for the same reason.
+            fun resolveAttrName(rawAttrName: String): Int? {
+                val name = rawAttrName.removePrefix("android:")
+                return tableBlock.getResource(packageBlock, "attr", name)?.resourceId
+            }
+
+            // Encodes a style <item>'s text value into a StyleBagItem.
+            // Verified via an isolated round-trip test against real
+            // ARSCLib-1.4.0 for: color, dimension, boolean, int, float,
+            // @-reference, and plain-string values. Returns null (with a
+            // log line, left to the caller) if nothing worked.
+            fun encodeStyleItemValue(rawValue: String): StyleBagItem? {
+                val trimmed = rawValue.trim()
+                if (trimmed.isEmpty()) return null
+
+                if (trimmed.startsWith("@")) {
+                    val result = ValueCoder.encodeReference(tableBlock, trimmed)
+                    if (result != null && !result.isError) return StyleBagItem.encoded(result)
+                    return null
+                }
+
+                if (trimmed.startsWith("?")) {
+                    // Theme-relative attribute reference, e.g.
+                    // "?attr/colorPrimary" or "?android:attr/colorPrimary".
+                    // Lower confidence than the other branches here — this
+                    // specific form wasn't covered by the isolated
+                    // round-trip test, only StyleBagItem.attribute(int)'s
+                    // existence was confirmed via javap. Real-build output
+                    // is what will actually validate this one.
+                    val attrRef = trimmed.removePrefix("?")
+                        .removePrefix("android:attr/")
+                        .removePrefix("attr/")
+                    val attrId = resolveAttrName(attrRef) ?: return null
+                    return StyleBagItem.attribute(attrId)
+                }
+
+                val result = ValueCoder.encode(trimmed)
+                if (result != null && !result.isError) return StyleBagItem.encoded(result)
+
+                // Fallback: plain string, which ValueCoder.encode() doesn't
+                // handle (it only matches specific literal patterns like
+                // colors/dimensions/numbers, confirmed via the round-trip
+                // test — arbitrary text returns null rather than a string
+                // result).
+                val tableString = tableBlock.tableStringPool.getOrCreate(trimmed)
+                return StyleBagItem.string(tableString)
+            }
+
             for (source in sources) {
                 val resDir = source.resDir
                 val pkg = source.packageName
 
                 // --- values/*.xml: string, color, dimen, bool, integer,
-                // plus style/attr (registered as IDs only - no attempt
-                // to encode parent inheritance or item content yet, just
-                // enough for R.style.xxx / R.attr.xxx to resolve instead
-                // of throwing ClassNotFoundException/NoClassDefFoundError
-                // at runtime for code, like AppCompatDelegateImpl, that
-                // reads its own R$style fields) ---
+                // plus style/attr. Styles now get real content encoded
+                // (parent chain + <item> values via StyleBag/ValueCoder),
+                // not just an empty registered ID. ---
                 resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
                     valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
@@ -188,7 +254,61 @@ object ResourceCompiler {
                                 when (node.tagName) {
                                     "style" -> {
                                         val name = node.getAttribute("name")
-                                        if (name.isNotBlank()) register(pkg, "style", name)
+                                        if (name.isNotBlank()) {
+                                            // Ensures the ID is tracked in
+                                            // our own registry for R-class
+                                            // generation; return value
+                                            // ignored here since we always
+                                            // fetch the Entry fresh below
+                                            // regardless of whether this is
+                                            // this name's first occurrence
+                                            // (a style re-declared across
+                                            // multiple qualified values
+                                            // folders still needs its
+                                            // content encoded each time).
+                                            register(pkg, "style", name)
+                                            val entry = packageBlock.getOrCreate("", "style", name)
+                                            try {
+                                                // A fresh Entry defaults to
+                                                // a simple scalar type —
+                                                // StyleBag.create() returns
+                                                // null without this
+                                                // (confirmed via isolated
+                                                // round-trip test).
+                                                entry.ensureComplex(true)
+                                                val styleBag = StyleBag.create(entry)
+                                                val parentName = node.getAttribute("parent")
+                                                if (parentName.isNotBlank()) {
+                                                    val parentId = resolveStyleParent(parentName)
+                                                    if (parentId != null) {
+                                                        styleBag.setParentId(parentId)
+                                                    } else {
+                                                        log.appendLine("Warning: could not resolve parent '$parentName' for style '$name'")
+                                                    }
+                                                }
+                                                val itemNodes = node.childNodes
+                                                for (j in 0 until itemNodes.length) {
+                                                    val itemNode = itemNodes.item(j)
+                                                    if (itemNode !is Element || itemNode.tagName != "item") continue
+                                                    val itemName = itemNode.getAttribute("name")
+                                                    if (itemName.isBlank()) continue
+                                                    val attrId = resolveAttrName(itemName)
+                                                    if (attrId == null) {
+                                                        log.appendLine("Warning: could not resolve attr '$itemName' for style '$name' item")
+                                                        continue
+                                                    }
+                                                    val itemValue = itemNode.textContent ?: ""
+                                                    val bagItem = encodeStyleItemValue(itemValue)
+                                                    if (bagItem != null) {
+                                                        styleBag.put(attrId, bagItem)
+                                                    } else {
+                                                        log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                log.appendLine("Warning: failed to encode style content for '$name': ${e.message}")
+                                            }
+                                        }
                                     }
                                     "attr" -> {
                                         val name = node.getAttribute("name")
@@ -414,6 +534,12 @@ object ResourceCompiler {
                 rFile.writeText(rSource)
                 log.appendLine("Generated ${rFile.name} for $pkg: ${rFile.path}")
             }
+
+            // Recomputes offsets/sizes/counts after all the mutations
+            // above. Confirmed necessary via an isolated round-trip test —
+            // writeBytes() without this first produced a file that threw
+            // EOFException when read back, despite writing without error.
+            tableBlock.refreshFull()
 
             ResourceCompileResult(
                 success = true,
