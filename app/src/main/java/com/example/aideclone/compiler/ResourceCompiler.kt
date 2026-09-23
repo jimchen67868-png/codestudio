@@ -254,61 +254,18 @@ object ResourceCompiler {
                                 when (node.tagName) {
                                     "style" -> {
                                         val name = node.getAttribute("name")
-                                        if (name.isNotBlank()) {
-                                            // Ensures the ID is tracked in
-                                            // our own registry for R-class
-                                            // generation; return value
-                                            // ignored here since we always
-                                            // fetch the Entry fresh below
-                                            // regardless of whether this is
-                                            // this name's first occurrence
-                                            // (a style re-declared across
-                                            // multiple qualified values
-                                            // folders still needs its
-                                            // content encoded each time).
-                                            register(pkg, "style", name)
-                                            val entry = packageBlock.getOrCreate("", "style", name)
-                                            try {
-                                                // A fresh Entry defaults to
-                                                // a simple scalar type —
-                                                // StyleBag.create() returns
-                                                // null without this
-                                                // (confirmed via isolated
-                                                // round-trip test).
-                                                entry.ensureComplex(true)
-                                                val styleBag = StyleBag.create(entry)
-                                                val parentName = node.getAttribute("parent")
-                                                if (parentName.isNotBlank()) {
-                                                    val parentId = resolveStyleParent(parentName)
-                                                    if (parentId != null) {
-                                                        styleBag.setParentId(parentId)
-                                                    } else {
-                                                        log.appendLine("Warning: could not resolve parent '$parentName' for style '$name'")
-                                                    }
-                                                }
-                                                val itemNodes = node.childNodes
-                                                for (j in 0 until itemNodes.length) {
-                                                    val itemNode = itemNodes.item(j)
-                                                    if (itemNode !is Element || itemNode.tagName != "item") continue
-                                                    val itemName = itemNode.getAttribute("name")
-                                                    if (itemName.isBlank()) continue
-                                                    val attrId = resolveAttrName(itemName)
-                                                    if (attrId == null) {
-                                                        log.appendLine("Warning: could not resolve attr '$itemName' for style '$name' item")
-                                                        continue
-                                                    }
-                                                    val itemValue = itemNode.textContent ?: ""
-                                                    val bagItem = encodeStyleItemValue(itemValue)
-                                                    if (bagItem != null) {
-                                                        styleBag.put(attrId, bagItem)
-                                                    } else {
-                                                        log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
-                                                    }
-                                                }
-                                            } catch (e: Exception) {
-                                                log.appendLine("Warning: failed to encode style content for '$name': ${e.message}")
-                                            }
-                                        }
+                                        // Bare registration only here — actual
+                                        // content (parent + items) is encoded
+                                        // in a separate pass after every
+                                        // source's names are registered, so a
+                                        // parent/item referencing a resource
+                                        // declared in a not-yet-processed
+                                        // source (e.g. the app's own theme
+                                        // extending a library style processed
+                                        // later in `sources`) can still
+                                        // resolve. See the pass below the
+                                        // main source loop.
+                                        if (name.isNotBlank()) register(pkg, "style", name)
                                     }
                                     "attr" -> {
                                         val name = node.getAttribute("name")
@@ -454,6 +411,73 @@ object ResourceCompiler {
                     "Registered resources for $pkg: " +
                         (registry[pkg]?.entries?.joinToString { "${it.key}=${it.value.size}" } ?: "none")
                 )
+            }
+
+            // --- Second pass: encode style content (parent + items) ---
+            // Deferred until every source's names are registered (the loop
+            // above), so a style's parent or an item's value can reference
+            // a resource declared in ANY source — including one processed
+            // later than the style itself, like the app's own theme
+            // extending a style that lives in a library — not just ones
+            // already seen by this point in a single pass.
+            for (source in sources) {
+                val resDir = source.resDir
+                val pkg = source.packageName
+                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
+                    valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
+                        try {
+                            val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlFile)
+                            val children = doc.documentElement.childNodes
+                            for (i in 0 until children.length) {
+                                val node = children.item(i)
+                                if (node !is Element || node.tagName != "style") continue
+                                val name = node.getAttribute("name")
+                                if (name.isBlank()) continue
+                                val entry = packageBlock.getOrCreate("", "style", name)
+                                try {
+                                    // A fresh Entry defaults to a simple
+                                    // scalar type — StyleBag.create()
+                                    // returns null without this (confirmed
+                                    // via isolated round-trip test).
+                                    entry.ensureComplex(true)
+                                    val styleBag = StyleBag.create(entry)
+                                    val parentName = node.getAttribute("parent")
+                                    if (parentName.isNotBlank()) {
+                                        val parentId = resolveStyleParent(parentName)
+                                        if (parentId != null) {
+                                            styleBag.setParentId(parentId)
+                                        } else {
+                                            log.appendLine("Warning: could not resolve parent '$parentName' for style '$name'")
+                                        }
+                                    }
+                                    val itemNodes = node.childNodes
+                                    for (j in 0 until itemNodes.length) {
+                                        val itemNode = itemNodes.item(j)
+                                        if (itemNode !is Element || itemNode.tagName != "item") continue
+                                        val itemName = itemNode.getAttribute("name")
+                                        if (itemName.isBlank()) continue
+                                        val attrId = resolveAttrName(itemName)
+                                        if (attrId == null) {
+                                            log.appendLine("Warning: could not resolve attr '$itemName' for style '$name' item")
+                                            continue
+                                        }
+                                        val itemValue = itemNode.textContent ?: ""
+                                        val bagItem = encodeStyleItemValue(itemValue)
+                                        if (bagItem != null) {
+                                            styleBag.put(attrId, bagItem)
+                                        } else {
+                                            log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    log.appendLine("Warning: failed to encode style content for '$name': ${e.message}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            log.appendLine("Warning: failed to parse ${xmlFile.path} in style-content pass: ${e.message}")
+                        }
+                    }
+                }
             }
 
             // --- Generate one R class per package, alongside the
