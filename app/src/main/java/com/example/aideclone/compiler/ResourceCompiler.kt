@@ -420,6 +420,29 @@ object ResourceCompiler {
             // later than the style itself, like the app's own theme
             // extending a style that lives in a library — not just ones
             // already seen by this point in a single pass.
+            //
+            // encodedStyleNames: a style name is content-encoded once, from
+            // whichever file it's first found in - not once per qualifier
+            // folder (values, values-v14, values-night, values-night-v14,
+            // ...). All of those currently collapse onto the SAME physical
+            // entry anyway, since getOrCreate("", "style", name) below asks
+            // for the default (unqualified) config regardless of which
+            // qualifier folder the XML actually came from — proper
+            // per-config entries aren't implemented here yet. Without this
+            // guard, re-processing the same name from a later qualifier
+            // file calls StyleBag.create() again, which resets the bag:
+            // the *last* qualifier file touching a given style silently
+            // overwrites its parent id AND wipes any <item>s a moment
+            // ago-processed file had put, rather than merging - confirmed
+            // via TRACE output showing e.g. "Theme.MaterialComponents.
+            // DayNight.NoActionBar" resolving to two different parents
+            // depending on file iteration order. Once-only, first-file-
+            // wins matches how every other resource type already behaves
+            // here (register() no-ops on a duplicate name) and removes the
+            // non-determinism, at the cost of not honoring qualifier-
+            // specific overrides for styles - acceptable for now given
+            // this app doesn't depend on config-specific theming.
+            val encodedStyleNames = mutableSetOf<String>()
             for (source in sources) {
                 val resDir = source.resDir
                 val pkg = source.packageName
@@ -433,6 +456,7 @@ object ResourceCompiler {
                                 if (node !is Element || node.tagName != "style") continue
                                 val name = node.getAttribute("name")
                                 if (name.isBlank()) continue
+                                if (!encodedStyleNames.add(name)) continue // already encoded from an earlier qualifier file - skip, don't overwrite
                                 val entry = packageBlock.getOrCreate("", "style", name)
                                 try {
                                     // A fresh Entry defaults to a simple
