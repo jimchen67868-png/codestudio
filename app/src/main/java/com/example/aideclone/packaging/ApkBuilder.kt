@@ -143,7 +143,7 @@ object ApkBuilder {
                     val appNodes = doc.getElementsByTagName("application")
                     if (appNodes.length > 0) {
                         val appEl = appNodes.item(0) as org.w3c.dom.Element
-                        val themeValue = appEl.getAttributeNS("http://schemas.android.com/apk/res/android", "theme")
+                        val themeValue = appEl.getAttribute("android:theme")
                         themeValue.ifBlank { null }
                     } else null
                 } catch (e: Exception) {
