@@ -446,6 +446,21 @@ object ResourceCompiler {
                                         val parentId = resolveStyleParent(parentName)
                                         if (parentId != null) {
                                             styleBag.setParentId(parentId)
+                                            // DIAGNOSTIC (temporary): trace the theme
+                                            // inheritance chain only - cheap since
+                                            // "Theme."-prefixed styles are a small
+                                            // fraction of the ~1100 total styles here.
+                                            // Lets us confirm from the log alone
+                                            // whether Theme.AutoClicker's chain
+                                            // actually reaches Theme.AppCompat.*,
+                                            // without needing an ARSCLib StyleBag
+                                            // getter we haven't verified exists.
+                                            if (name.startsWith("Theme.")) {
+                                                log.appendLine(
+                                                    "TRACE style '$name' (id=0x${entry.resourceId.toString(16)}) " +
+                                                        "parent='$parentName' resolved to id=0x${parentId.toString(16)}"
+                                                )
+                                            }
                                         } else {
                                             log.appendLine("Warning: could not resolve parent '$parentName' for style '$name'")
                                         }
@@ -465,6 +480,17 @@ object ResourceCompiler {
                                         val bagItem = encodeStyleItemValue(itemValue)
                                         if (bagItem != null) {
                                             styleBag.put(attrId, bagItem)
+                                            // DIAGNOSTIC (temporary): windowActionBar
+                                            // is the single attr createSubDecor()
+                                            // checks for to decide "is this an
+                                            // AppCompat theme" - trace every style
+                                            // that sets it, wherever in the chain.
+                                            if (itemName == "windowActionBar" || itemName == "android:windowActionBar") {
+                                                log.appendLine(
+                                                    "TRACE style '$name' sets item '$itemName' " +
+                                                        "(attrId=0x${attrId.toString(16)}) = '$itemValue'"
+                                                )
+                                            }
                                         } else {
                                             log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
                                         }
