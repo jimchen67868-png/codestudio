@@ -7,7 +7,9 @@ import com.reandroid.apk.ApkModule
 import com.reandroid.archive.ByteInputSource
 import com.reandroid.arsc.chunk.TableBlock
 import com.reandroid.arsc.chunk.xml.AndroidManifestBlock
+import com.reandroid.arsc.coder.ValueCoder
 import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
 
 data class BuildResult(val success: Boolean, val apkFile: File?, val log: String)
 
@@ -111,6 +113,65 @@ object ApkBuilder {
             // the classpath, or the resulting APK will crash on launch.
             manifest.getOrCreateMainActivity(mainActivityClass)
             log.appendLine("Manifest built for $packageName / $mainActivityClass")
+
+            // android:theme was never being set anywhere - this whole
+            // manifest is built from scratch above rather than reading
+            // the project's actual AndroidManifest.xml, so the project's
+            // own theme declaration was simply never carried through.
+            // Confirmed via a real device crash: "You need to use a
+            // Theme.AppCompat theme (or descendant) with this activity"
+            // - createSubDecor() checks the app's *resolved* theme, and
+            // with no android:theme attribute at all the OS falls back
+            // to a bare platform theme regardless of how correctly
+            // Theme.AutoClicker itself compiles in resources.arsc (which
+            // it does - traced separately).
+            //
+            // Scoped fix, not full manifest merging: just pull the
+            // android:theme value out of the project's real
+            // AndroidManifest.xml (if present) and wire that one
+            // attribute through, reusing already-confirmed APIs -
+            // ValueCoder.encodeReference() + ValueItem.setValue(EncodeResult)
+            // is the exact same pair ResourceCompiler already uses for
+            // @-reference style items, and getOrCreateAndroidAttribute()
+            // was confirmed to exist via javap against ARSCLib-1.4.0
+            // before writing this.
+            val projectManifestFile = projectRoot.walkTopDown()
+                .firstOrNull { it.isFile && it.name == "AndroidManifest.xml" && !it.path.contains("/build/") }
+            val declaredTheme = projectManifestFile?.let { manifestFile ->
+                try {
+                    val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(manifestFile)
+                    val appNodes = doc.getElementsByTagName("application")
+                    if (appNodes.length > 0) {
+                        val appEl = appNodes.item(0) as org.w3c.dom.Element
+                        val themeValue = appEl.getAttributeNS("http://schemas.android.com/apk/res/android", "theme")
+                        themeValue.ifBlank { null }
+                    } else null
+                } catch (e: Exception) {
+                    log.appendLine("Warning: failed to parse ${manifestFile.path} for android:theme: ${e.message}")
+                    null
+                }
+            }
+            if (declaredTheme != null) {
+                // "android:theme" itself is a framework attr - resolved
+                // against the real attached framework table the same way
+                // ResourceCompiler.resolveAttrName() already does, rather
+                // than hardcoding its numeric id from memory.
+                val themeAttrId = tableBlock.getResource(packageBlock, "attr", "theme")?.resourceId
+                val encodedThemeRef = ValueCoder.encodeReference(tableBlock, declaredTheme)
+                if (themeAttrId != null && encodedThemeRef != null && !encodedThemeRef.isError) {
+                    val appElement = manifest.getOrCreateApplicationElement()
+                    val themeAttr = appElement.getOrCreateAndroidAttribute("theme", themeAttrId)
+                    themeAttr.setValue(encodedThemeRef)
+                    log.appendLine("Set android:theme=\"$declaredTheme\" on <application> (attrId=0x${themeAttrId.toString(16)})")
+                } else {
+                    log.appendLine(
+                        "Warning: found android:theme=\"$declaredTheme\" in the project manifest but could not " +
+                            "resolve it (themeAttrId=$themeAttrId, encodedThemeRef=$encodedThemeRef) - activity may crash at runtime."
+                    )
+                }
+            } else {
+                log.appendLine("Warning: no android:theme found in project AndroidManifest.xml - activity will use the platform default theme, which will crash if it extends AppCompatActivity.")
+            }
 
             apkModule.add(ByteInputSource(dexResult.dexFile.readBytes(), "classes.dex"))
 
