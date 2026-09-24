@@ -44,6 +44,10 @@ jobs:
           javap -classpath "$JAR" com.reandroid.arsc.chunk.xml.ResXmlElement
           echo "===== ResXmlAttribute ====="
           javap -classpath "$JAR" com.reandroid.arsc.chunk.xml.ResXmlAttribute
+          echo "===== AttributeValue ====="
+          javap -classpath "$JAR" com.reandroid.arsc.value.AttributeValue
+          echo "===== ValueItem (if AttributeValue extends it) ====="
+          javap -classpath "$JAR" com.reandroid.arsc.value.ValueItem || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
