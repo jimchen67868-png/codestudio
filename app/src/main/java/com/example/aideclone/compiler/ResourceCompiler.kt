@@ -351,6 +351,38 @@ object ResourceCompiler {
 
                         register(pkg, baseType, entryName)?.setValueAsString(apkPath)
 
+                        // Scan XML-based resources (layouts especially) for
+                        // @+id/foo declarations, which implicitly declare new
+                        // id-type resources not listed anywhere in values/.
+                        // MUST run before binary XML compilation below, not
+                        // after: ResXmlDocument.parse() resolves every
+                        // android:id="@+id/x" reference against the
+                        // packageBlock as it encodes each attribute, and
+                        // fails with "Resource not found for: '@+id/x'" if
+                        // that id hasn't been registered yet - which was
+                        // exactly what was happening here before, for
+                        // every single layout that declares a NEW id
+                        // (i.e. nearly all of them). Confirmed via a real
+                        // build/crash: every "failed to compile binary
+                        // XML" warning for AppCompat's bundled layouts
+                        // (abc_screen_simple.xml, abc_screen_toolbar.xml,
+                        // etc.) was this exact cause, and abc_screen_
+                        // simple.xml's raw-copied fallback is what
+                        // AppCompatDelegateImpl.createSubDecor() inflates
+                        // on every activity launch, crashing with
+                        // "Corrupt XML binary file" the moment it tried.
+                        if (resFile.extension == "xml") {
+                            try {
+                                val content = resFile.readText()
+                                ID_ATTR_REGEX.findAll(content).forEach { match ->
+                                    val idName = match.groupValues[1]
+                                    register(pkg, "id", idName)?.setValueAsString(idName)
+                                }
+                            } catch (e: Exception) {
+                                log.appendLine("Warning: failed to scan ids in ${resFile.path}: ${e.message}")
+                            }
+                        }
+
                         // Android's resource loader only accepts XML-type
                         // file resources (layouts, vector drawables,
                         // menus, animators, xml/) in compiled binary
@@ -389,21 +421,6 @@ object ResourceCompiler {
                             }
                         } else {
                             fileResources[apkPath] = resFile
-                        }
-
-                        // Scan XML-based resources (layouts especially) for
-                        // @+id/foo declarations, which implicitly declare new
-                        // id-type resources not listed anywhere in values/.
-                        if (resFile.extension == "xml") {
-                            try {
-                                val content = resFile.readText()
-                                ID_ATTR_REGEX.findAll(content).forEach { match ->
-                                    val idName = match.groupValues[1]
-                                    register(pkg, "id", idName)?.setValueAsString(idName)
-                                }
-                            } catch (e: Exception) {
-                                log.appendLine("Warning: failed to scan ids in ${resFile.path}: ${e.message}")
-                            }
                         }
                     }
                 }
