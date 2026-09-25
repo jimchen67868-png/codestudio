@@ -163,6 +163,30 @@ object ApkBuilder {
                                 "valueAsString=${themeAttrCheck.valueAsString}, decodeValue=${themeAttrCheck.decodeValue()}"
                         )
                     }
+
+                    // DIAGNOSTIC (temporary), round 2: the attribute is
+                    // genuinely missing on getOrCreateApplicationElement()'s
+                    // result - but is that because parse() actually lost
+                    // it, or because getOrCreateApplicationElement()
+                    // returns a DIFFERENT, freshly-created <application>
+                    // than the one parse() populated (i.e. there are two
+                    // of them in the tree)? Dump every <application>
+                    // element actually present, with its full attribute
+                    // list, to settle this directly rather than guessing
+                    // a third time.
+                    val manifestRoot = manifest.getManifestElement()
+                    val appElementsIter = manifestRoot.getElements("application")
+                    var appElementCount = 0
+                    while (appElementsIter.hasNext()) {
+                        val el = appElementsIter.next() as com.reandroid.arsc.chunk.xml.ResXmlElement
+                        appElementCount++
+                        log.appendLine("TRACE: <application> instance #$appElementCount has ${el.attributeCount} attribute(s):")
+                        for (i in 0 until el.attributeCount) {
+                            val attr = el.getAttributeAt(i)
+                            log.appendLine("  - ${attr.name} = ${attr.decodeValue()}")
+                        }
+                    }
+                    log.appendLine("TRACE: total <application> elements found in tree: $appElementCount")
                 } catch (e: Exception) {
                     log.appendLine("Warning: failed to parse ${projectManifestFile.path}: ${e.message} - falling back to a bare generated manifest (no permissions/services will be declared).")
                 }
