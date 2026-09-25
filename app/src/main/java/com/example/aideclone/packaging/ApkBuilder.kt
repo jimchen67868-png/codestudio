@@ -7,9 +7,10 @@ import com.reandroid.apk.ApkModule
 import com.reandroid.archive.ByteInputSource
 import com.reandroid.arsc.chunk.TableBlock
 import com.reandroid.arsc.chunk.xml.AndroidManifestBlock
-import com.reandroid.arsc.coder.ValueCoder
+import com.reandroid.xml.kxml2.KXmlParser
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
-import javax.xml.parsers.DocumentBuilderFactory
+import java.io.FileInputStream
 
 data class BuildResult(val success: Boolean, val apkFile: File?, val log: String)
 
@@ -97,6 +98,58 @@ object ApkBuilder {
             }
 
             manifest.setPackageName(packageName)
+
+            // Real manifest merging: parse the project's actual
+            // AndroidManifest.xml directly into this AndroidManifestBlock,
+            // rather than hand-building one field at a time. This is what
+            // actually surfaced as broken beyond just the theme: a real
+            // device test showed AutoClicker missing entirely from
+            // Settings > Accessibility, and its overlay permission toggle
+            // never turning on - because the from-scratch manifest never
+            // declared the app's <uses-permission> entries or its
+            // <service> (with the BIND_ACCESSIBILITY_SERVICE intent-filter
+            // + meta-data) at all, only a bare activity.
+            //
+            // AndroidManifestBlock IS a ResXmlDocument (confirmed via
+            // javap: "extends com.reandroid.arsc.chunk.xml.
+            // ResXmlDocument", with neither setPackageBlock nor parse
+            // overridden), so it inherits the exact same
+            // setPackageBlock(packageBlock) + parse(parser) pattern
+            // ResourceCompiler.kt already uses successfully for every
+            // layout file - @string/@style/@drawable/@xml references in
+            // the manifest resolve against the same packageBlock, and
+            // android:-namespaced attributes resolve against the same
+            // attached framework table, with no new unverified API.
+            //
+            // Falls back to the old bare-activity construction if the
+            // project has no AndroidManifest.xml or it fails to parse,
+            // rather than failing the whole build - consistent with
+            // every other fallback in this codebase.
+            val projectManifestFile = projectRoot.walkTopDown()
+                .firstOrNull { it.isFile && it.name == "AndroidManifest.xml" && !it.path.contains("/build/") }
+            var mergedRealManifest = false
+            if (projectManifestFile != null) {
+                try {
+                    val parser = KXmlParser()
+                    parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+                    FileInputStream(projectManifestFile).use { input ->
+                        parser.setInput(input, null)
+                        manifest.setPackageBlock(packageBlock)
+                        manifest.parse(parser)
+                    }
+                    mergedRealManifest = true
+                    log.appendLine("Merged real manifest from ${projectManifestFile.path} (permissions, services, theme, etc. all carried through)")
+                } catch (e: Exception) {
+                    log.appendLine("Warning: failed to parse ${projectManifestFile.path}: ${e.message} - falling back to a bare generated manifest (no permissions/services will be declared).")
+                }
+            } else {
+                log.appendLine("Warning: no AndroidManifest.xml found in project - generating a bare manifest (no permissions/services will be declared).")
+            }
+
+            // Build-level settings, not sourced from the project manifest
+            // (the sample project has no <uses-sdk> etc. of its own) -
+            // set/overwritten unconditionally regardless of which path
+            // above was taken.
             manifest.setVersionCode(1)
             manifest.setVersionName("0.1")
             manifest.setCompileSdkVersion(34)
@@ -107,71 +160,11 @@ object ApkBuilder {
             manifest.setMinSdkVersion(24)
             manifest.setTargetSdkVersion(34)
 
-            // Declares mainActivityClass as the launcher activity
-            // (MAIN/LAUNCHER intent filter) — this must be a real
-            // android.app.Activity subclass compiled with android.jar on
-            // the classpath, or the resulting APK will crash on launch.
+            // Ensures the launcher activity exists even on the fallback
+            // (no-real-manifest) path; a no-op / returns the existing
+            // element when the real manifest above already declared it.
             manifest.getOrCreateMainActivity(mainActivityClass)
-            log.appendLine("Manifest built for $packageName / $mainActivityClass")
-
-            // android:theme was never being set anywhere - this whole
-            // manifest is built from scratch above rather than reading
-            // the project's actual AndroidManifest.xml, so the project's
-            // own theme declaration was simply never carried through.
-            // Confirmed via a real device crash: "You need to use a
-            // Theme.AppCompat theme (or descendant) with this activity"
-            // - createSubDecor() checks the app's *resolved* theme, and
-            // with no android:theme attribute at all the OS falls back
-            // to a bare platform theme regardless of how correctly
-            // Theme.AutoClicker itself compiles in resources.arsc (which
-            // it does - traced separately).
-            //
-            // Scoped fix, not full manifest merging: just pull the
-            // android:theme value out of the project's real
-            // AndroidManifest.xml (if present) and wire that one
-            // attribute through, reusing already-confirmed APIs -
-            // ValueCoder.encodeReference() + ValueItem.setValue(EncodeResult)
-            // is the exact same pair ResourceCompiler already uses for
-            // @-reference style items, and getOrCreateAndroidAttribute()
-            // was confirmed to exist via javap against ARSCLib-1.4.0
-            // before writing this.
-            val projectManifestFile = projectRoot.walkTopDown()
-                .firstOrNull { it.isFile && it.name == "AndroidManifest.xml" && !it.path.contains("/build/") }
-            val declaredTheme = projectManifestFile?.let { manifestFile ->
-                try {
-                    val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(manifestFile)
-                    val appNodes = doc.getElementsByTagName("application")
-                    if (appNodes.length > 0) {
-                        val appEl = appNodes.item(0) as org.w3c.dom.Element
-                        val themeValue = appEl.getAttribute("android:theme")
-                        themeValue.ifBlank { null }
-                    } else null
-                } catch (e: Exception) {
-                    log.appendLine("Warning: failed to parse ${manifestFile.path} for android:theme: ${e.message}")
-                    null
-                }
-            }
-            if (declaredTheme != null) {
-                // "android:theme" itself is a framework attr - resolved
-                // against the real attached framework table the same way
-                // ResourceCompiler.resolveAttrName() already does, rather
-                // than hardcoding its numeric id from memory.
-                val themeAttrId = tableBlock.getResource(packageBlock, "attr", "theme")?.resourceId
-                val encodedThemeRef = ValueCoder.encodeReference(tableBlock, declaredTheme)
-                if (themeAttrId != null && encodedThemeRef != null && !encodedThemeRef.isError) {
-                    val appElement = manifest.getOrCreateApplicationElement()
-                    val themeAttr = appElement.getOrCreateAndroidAttribute("theme", themeAttrId)
-                    themeAttr.setValue(encodedThemeRef)
-                    log.appendLine("Set android:theme=\"$declaredTheme\" on <application> (attrId=0x${themeAttrId.toString(16)})")
-                } else {
-                    log.appendLine(
-                        "Warning: found android:theme=\"$declaredTheme\" in the project manifest but could not " +
-                            "resolve it (themeAttrId=$themeAttrId, encodedThemeRef=$encodedThemeRef) - activity may crash at runtime."
-                    )
-                }
-            } else {
-                log.appendLine("Warning: no android:theme found in project AndroidManifest.xml - activity will use the platform default theme, which will crash if it extends AppCompatActivity.")
-            }
+            log.appendLine("Manifest ready for $packageName / $mainActivityClass (real manifest merged: $mergedRealManifest)")
 
             apkModule.add(ByteInputSource(dexResult.dexFile.readBytes(), "classes.dex"))
 
