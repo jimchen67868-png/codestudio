@@ -139,6 +139,30 @@ object ApkBuilder {
                     }
                     mergedRealManifest = true
                     log.appendLine("Merged real manifest from ${projectManifestFile.path} (permissions, services, theme, etc. all carried through)")
+
+                    // DIAGNOSTIC (temporary): the merge completed without
+                    // throwing, but the app still crashed with "You need
+                    // to use a Theme.AppCompat theme" at runtime after
+                    // this change - meaning parse() may have accepted
+                    // android:theme syntactically without actually
+                    // resolving/encoding it as a proper reference value.
+                    // Trace exactly what's on the attribute now, using
+                    // only already-confirmed APIs (searchAttributeByName
+                    // on ResXmlElement; getValueType/getData/
+                    // getValueAsString/decodeValue on ValueItem, all
+                    // confirmed via javap earlier) rather than guessing
+                    // again.
+                    val appElementCheck = manifest.getOrCreateApplicationElement()
+                    val themeAttrCheck = appElementCheck.searchAttributeByName("theme")
+                    if (themeAttrCheck == null) {
+                        log.appendLine("TRACE: <application> has NO 'theme' attribute at all after parse() - it was dropped entirely.")
+                    } else {
+                        log.appendLine(
+                            "TRACE: <application> theme attribute after parse(): " +
+                                "valueType=${themeAttrCheck.valueType}, data=0x${themeAttrCheck.data.toString(16)}, " +
+                                "valueAsString=${themeAttrCheck.valueAsString}, decodeValue=${themeAttrCheck.decodeValue()}"
+                        )
+                    }
                 } catch (e: Exception) {
                     log.appendLine("Warning: failed to parse ${projectManifestFile.path}: ${e.message} - falling back to a bare generated manifest (no permissions/services will be declared).")
                 }
@@ -165,6 +189,25 @@ object ApkBuilder {
             // element when the real manifest above already declared it.
             manifest.getOrCreateMainActivity(mainActivityClass)
             log.appendLine("Manifest ready for $packageName / $mainActivityClass (real manifest merged: $mergedRealManifest)")
+
+            // DIAGNOSTIC (temporary): re-check the theme attribute here,
+            // after getOrCreateMainActivity/setApplicationLabel/etc. ran -
+            // in case one of those calls resets or replaces the
+            // <application> element that parse() populated, rather than
+            // the problem being in parse() itself.
+            run {
+                val appElementFinal = manifest.getOrCreateApplicationElement()
+                val themeAttrFinal = appElementFinal.searchAttributeByName("theme")
+                if (themeAttrFinal == null) {
+                    log.appendLine("TRACE (final, pre-write): <application> has NO 'theme' attribute.")
+                } else {
+                    log.appendLine(
+                        "TRACE (final, pre-write): <application> theme attribute: " +
+                            "valueType=${themeAttrFinal.valueType}, data=0x${themeAttrFinal.data.toString(16)}, " +
+                            "valueAsString=${themeAttrFinal.valueAsString}, decodeValue=${themeAttrFinal.decodeValue()}"
+                    )
+                }
+            }
 
             apkModule.add(ByteInputSource(dexResult.dexFile.readBytes(), "classes.dex"))
 
