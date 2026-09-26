@@ -326,7 +326,23 @@ object ResourceCompiler {
                     }
                 }
 
-                // --- layout/menu/anim/xml/drawable/mipmap: file resources + @+id scan ---
+                // --- layout/menu/anim/xml/drawable/mipmap: registration
+                // + @+id scan only here, NO binary XML compilation yet.
+                // Compiling in the same pass that registers file
+                // resources means whichever type directory (layout/,
+                // drawable/, xml/, ...) a filesystem happens to list
+                // first can try to compile a layout referencing
+                // @drawable/foo before foo itself is registered -
+                // confirmed via a real crash: overlay_target.xml failed
+                // with "Resource not found for: '@drawable/target_circle'"
+                // even though that drawable exists in the very same
+                // project, simply because "layout" was processed before
+                // "drawable" this run. Same root cause as the @+id
+                // ordering bug fixed earlier, one level up: register
+                // every file resource across every type directory (and
+                // every source) FIRST, then compile binary XML in a
+                // fully separate pass afterward, exactly mirroring the
+                // two-pass split already used for style content. ---
                 resDir.listFiles { f -> f.isDirectory }?.forEach { typeDir ->
                     if (typeDir.name.startsWith("values")) return@forEach // already handled above
                     val baseType = typeDir.name.substringBefore("-")
@@ -354,23 +370,6 @@ object ResourceCompiler {
                         // Scan XML-based resources (layouts especially) for
                         // @+id/foo declarations, which implicitly declare new
                         // id-type resources not listed anywhere in values/.
-                        // MUST run before binary XML compilation below, not
-                        // after: ResXmlDocument.parse() resolves every
-                        // android:id="@+id/x" reference against the
-                        // packageBlock as it encodes each attribute, and
-                        // fails with "Resource not found for: '@+id/x'" if
-                        // that id hasn't been registered yet - which was
-                        // exactly what was happening here before, for
-                        // every single layout that declares a NEW id
-                        // (i.e. nearly all of them). Confirmed via a real
-                        // build/crash: every "failed to compile binary
-                        // XML" warning for AppCompat's bundled layouts
-                        // (abc_screen_simple.xml, abc_screen_toolbar.xml,
-                        // etc.) was this exact cause, and abc_screen_
-                        // simple.xml's raw-copied fallback is what
-                        // AppCompatDelegateImpl.createSubDecor() inflates
-                        // on every activity launch, crashing with
-                        // "Corrupt XML binary file" the moment it tried.
                         if (resFile.extension == "xml") {
                             try {
                                 val content = resFile.readText()
@@ -381,45 +380,10 @@ object ResourceCompiler {
                             } catch (e: Exception) {
                                 log.appendLine("Warning: failed to scan ids in ${resFile.path}: ${e.message}")
                             }
-                        }
-
-                        // Android's resource loader only accepts XML-type
-                        // file resources (layouts, vector drawables,
-                        // menus, animators, xml/) in compiled binary
-                        // form - a raw text copy throws
-                        // FileNotFoundException("Corrupt XML binary
-                        // file") at runtime the moment anything tries to
-                        // inflate it. Compile via ARSCLib's own
-                        // ResXmlDocument against the same packageBlock
-                        // used for R generation, so @+id/@drawable/etc
-                        // references in the XML resolve to the IDs we
-                        // just assigned above.
-                        if (resFile.extension == "xml") {
-                            try {
-                                val compiledFile = File(projectRoot, "build/compiled-res/$apkPath")
-                                compiledFile.parentFile?.mkdirs()
-                                val parser = KXmlParser()
-                                parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-                                FileInputStream(resFile).use { input ->
-                                    parser.setInput(input, null)
-                                    val xmlDoc = ResXmlDocument()
-                                    xmlDoc.setPackageBlock(packageBlock)
-                                    xmlDoc.parse(parser)
-                                    xmlDoc.writeBytes(compiledFile)
-                                }
-                                fileResources[apkPath] = compiledFile
-                            } catch (e: Exception) {
-                                // Fall back to the raw file rather than
-                                // failing the whole build - it'll still
-                                // throw at runtime if this specific
-                                // resource is ever loaded, but everything
-                                // else keeps working, and the log line
-                                // below tells us exactly which file and
-                                // why for the next round of fixes.
-                                log.appendLine("Warning: failed to compile binary XML for ${resFile.path}: ${e.message} - copying raw (will likely fail at runtime if loaded)")
-                                fileResources[apkPath] = resFile
-                            }
                         } else {
+                            // Non-XML file resources (png/etc.) need no
+                            // compilation and carry no forward-reference
+                            // risk, so they can be finalized right here.
                             fileResources[apkPath] = resFile
                         }
                     }
@@ -430,7 +394,62 @@ object ResourceCompiler {
                 )
             }
 
-            // --- Second pass: encode style content (parent + items) ---
+            // --- Second pass: compile binary XML for every XML-type file
+            // resource (layout/menu/anim/xml/drawable), now that every
+            // source's file resources (drawables, ids, everything) are
+            // registered above. Deferred exactly like the style-content
+            // pass and for the same reason: @drawable/@layout/@+id/etc
+            // references inside these files may point at a resource
+            // declared in a different type directory or a different
+            // source than the one currently being compiled. ---
+            for (source in sources) {
+                val resDir = source.resDir
+                val pkg = source.packageName
+                resDir.listFiles { f -> f.isDirectory }?.forEach { typeDir ->
+                    if (typeDir.name.startsWith("values")) return@forEach
+                    typeDir.listFiles { f -> f.isFile && f.extension == "xml" }?.forEach { resFile ->
+                        val apkPath = "res/${pkg.replace('.', '_')}/${typeDir.name}/${resFile.name}"
+
+                        // Android's resource loader only accepts XML-type
+                        // file resources (layouts, vector drawables,
+                        // menus, animators, xml/) in compiled binary
+                        // form - a raw text copy throws
+                        // FileNotFoundException("Corrupt XML binary
+                        // file") at runtime the moment anything tries to
+                        // inflate it. Compile via ARSCLib's own
+                        // ResXmlDocument against the same packageBlock
+                        // used for R generation, so @+id/@drawable/etc
+                        // references in the XML resolve to the IDs
+                        // registered in the pass above.
+                        try {
+                            val compiledFile = File(projectRoot, "build/compiled-res/$apkPath")
+                            compiledFile.parentFile?.mkdirs()
+                            val parser = KXmlParser()
+                            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+                            FileInputStream(resFile).use { input ->
+                                parser.setInput(input, null)
+                                val xmlDoc = ResXmlDocument()
+                                xmlDoc.setPackageBlock(packageBlock)
+                                xmlDoc.parse(parser)
+                                xmlDoc.writeBytes(compiledFile)
+                            }
+                            fileResources[apkPath] = compiledFile
+                        } catch (e: Exception) {
+                            // Fall back to the raw file rather than
+                            // failing the whole build - it'll still
+                            // throw at runtime if this specific
+                            // resource is ever loaded, but everything
+                            // else keeps working, and the log line
+                            // below tells us exactly which file and
+                            // why for the next round of fixes.
+                            log.appendLine("Warning: failed to compile binary XML for ${resFile.path}: ${e.message} - copying raw (will likely fail at runtime if loaded)")
+                            fileResources[apkPath] = resFile
+                        }
+                    }
+                }
+            }
+
+            // --- Third pass: encode style content (parent + items) ---
             // Deferred until every source's names are registered (the loop
             // above), so a style's parent or an item's value can reference
             // a resource declared in ANY source — including one processed
