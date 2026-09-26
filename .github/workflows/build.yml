@@ -34,15 +34,6 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
 
-      - name: TEMP - inspect ResXmlDocument / AndroidManifestBlock.load / ApkModule APIs
-        run: |
-          JAR=$(find ~/.gradle -iname "ARSCLib-1.4.0.jar" 2>/dev/null | head -1)
-          echo "Using jar: $JAR"
-          echo "===== ResXmlDocument ====="
-          javap -classpath "$JAR" com.reandroid.arsc.chunk.xml.ResXmlDocument
-          echo "===== ApkModule ====="
-          javap -classpath "$JAR" com.reandroid.apk.ApkModule
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

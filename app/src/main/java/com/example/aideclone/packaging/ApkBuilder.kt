@@ -137,6 +137,17 @@ object ApkBuilder {
                         manifest.setPackageBlock(packageBlock)
                         manifest.parse(parser)
                     }
+                    // Same pattern as tableBlock.refreshFull() being
+                    // required after resources.arsc mutations (confirmed
+                    // earlier via an isolated round-trip test): parse()
+                    // alone left every <application> attribute
+                    // unresolved/empty (confirmed via the TRACE dump
+                    // below showing 0 attributes on the parsed element).
+                    // ApkModule.refreshManifest() is a dedicated public
+                    // method for exactly this - reconciling the manifest
+                    // against the module's attached TableBlock after
+                    // loading/modifying it.
+                    apkModule.refreshManifest()
                     mergedRealManifest = true
                     log.appendLine("Merged real manifest from ${projectManifestFile.path} (permissions, services, theme, etc. all carried through)")
 
