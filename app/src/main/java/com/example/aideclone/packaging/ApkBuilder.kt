@@ -97,8 +97,6 @@ object ApkBuilder {
                 apkModule.add(ByteInputSource(sourceFile.readBytes(), apkPath))
             }
 
-            manifest.setPackageName(packageName)
-
             // Real manifest merging: parse the project's actual
             // AndroidManifest.xml directly into this AndroidManifestBlock,
             // rather than hand-building one field at a time. This is what
@@ -207,8 +205,18 @@ object ApkBuilder {
 
             // Build-level settings, not sourced from the project manifest
             // (the sample project has no <uses-sdk> etc. of its own) -
-            // set/overwritten unconditionally regardless of which path
-            // above was taken.
+            // set/overwritten AFTER parsing, not before: setPackageName()
+            // used to run before parse() and every <application>
+            // attribute came back empty (confirmed via TRACE - 0
+            // attributes immediately after parse()+refreshManifest(),
+            // before any of our own setXxx() calls ran). The one thing
+            // that differs from the layout-compilation path, which does
+            // work, is that layouts parse into a completely untouched
+            // ResXmlDocument() - so here, parse() now runs as the first
+            // thing ever done to `manifest`, and our own overrides are
+            // applied on top of the now-populated real structure
+            // afterward, mirroring that working pattern.
+            manifest.setPackageName(packageName)
             manifest.setVersionCode(1)
             manifest.setVersionName("0.1")
             manifest.setCompileSdkVersion(34)
