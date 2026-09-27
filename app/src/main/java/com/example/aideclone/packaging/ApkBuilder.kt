@@ -196,6 +196,28 @@ object ApkBuilder {
                         }
                     }
                     log.appendLine("TRACE: total <application> elements found in tree: $appElementCount")
+
+                    // DIAGNOSTIC (temporary): the exact same duplicate-
+                    // element bug class we found and fixed for
+                    // <application> could equally apply to <activity> -
+                    // getOrCreateMainActivity() runs AFTER this point and
+                    // might not recognize the already-parsed activity by
+                    // class name, potentially creating a second, bare
+                    // duplicate entry rather than reusing the real one.
+                    // Dump every <activity> element the same way, to
+                    // check before getOrCreateMainActivity() runs.
+                    val activityElementsIter = manifestRoot.getElements("activity")
+                    var activityElementCount = 0
+                    while (activityElementsIter.hasNext()) {
+                        val el = activityElementsIter.next() as com.reandroid.arsc.chunk.xml.ResXmlElement
+                        activityElementCount++
+                        log.appendLine("TRACE: <activity> instance #$activityElementCount has ${el.attributeCount} attribute(s):")
+                        for (i in 0 until el.attributeCount) {
+                            val attr = el.getAttributeAt(i)
+                            log.appendLine("  - ${attr.name} = ${attr.decodeValue()}")
+                        }
+                    }
+                    log.appendLine("TRACE: total <activity> elements found in tree (before getOrCreateMainActivity): $activityElementCount")
                 } catch (e: Exception) {
                     log.appendLine("Warning: failed to parse ${projectManifestFile.path}: ${e.message} - falling back to a bare generated manifest (no permissions/services will be declared).")
                 }
@@ -232,6 +254,26 @@ object ApkBuilder {
             // element when the real manifest above already declared it.
             manifest.getOrCreateMainActivity(mainActivityClass)
             log.appendLine("Manifest ready for $packageName / $mainActivityClass (real manifest merged: $mergedRealManifest)")
+
+            // DIAGNOSTIC (temporary): re-check <activity> elements here,
+            // after getOrCreateMainActivity() ran, to see whether it
+            // created a duplicate or otherwise changed what parse() had
+            // already populated.
+            run {
+                val manifestRootFinal = manifest.getManifestElement()
+                val activityElementsFinalIter = manifestRootFinal.getElements("activity")
+                var activityElementFinalCount = 0
+                while (activityElementsFinalIter.hasNext()) {
+                    val el = activityElementsFinalIter.next() as com.reandroid.arsc.chunk.xml.ResXmlElement
+                    activityElementFinalCount++
+                    log.appendLine("TRACE (final): <activity> instance #$activityElementFinalCount has ${el.attributeCount} attribute(s):")
+                    for (i in 0 until el.attributeCount) {
+                        val attr = el.getAttributeAt(i)
+                        log.appendLine("  - ${attr.name} = ${attr.decodeValue()}")
+                    }
+                }
+                log.appendLine("TRACE (final): total <activity> elements found in tree: $activityElementFinalCount")
+            }
 
             // DIAGNOSTIC (temporary): re-check the theme attribute here,
             // after getOrCreateMainActivity/setApplicationLabel/etc. ran -
