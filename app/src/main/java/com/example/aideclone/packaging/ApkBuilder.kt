@@ -206,10 +206,9 @@ object ApkBuilder {
                     // duplicate entry rather than reusing the real one.
                     // Dump every <activity> element the same way, to
                     // check before getOrCreateMainActivity() runs.
-                    val activityElementsIter = manifestRoot.getElements("activity")
+                    val activityList = manifest.listActivities()
                     var activityElementCount = 0
-                    while (activityElementsIter.hasNext()) {
-                        val el = activityElementsIter.next() as com.reandroid.arsc.chunk.xml.ResXmlElement
+                    for (el in activityList) {
                         activityElementCount++
                         log.appendLine("TRACE: <activity> instance #$activityElementCount has ${el.attributeCount} attribute(s):")
                         for (i in 0 until el.attributeCount) {
@@ -260,11 +259,8 @@ object ApkBuilder {
             // created a duplicate or otherwise changed what parse() had
             // already populated.
             run {
-                val manifestRootFinal = manifest.getManifestElement()
-                val activityElementsFinalIter = manifestRootFinal.getElements("activity")
                 var activityElementFinalCount = 0
-                while (activityElementsFinalIter.hasNext()) {
-                    val el = activityElementsFinalIter.next() as com.reandroid.arsc.chunk.xml.ResXmlElement
+                for (el in manifest.listActivities()) {
                     activityElementFinalCount++
                     log.appendLine("TRACE (final): <activity> instance #$activityElementFinalCount has ${el.attributeCount} attribute(s):")
                     for (i in 0 until el.attributeCount) {
