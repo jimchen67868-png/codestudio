@@ -551,6 +551,33 @@ object ResourceCompiler {
                                                         "(attrId=0x${attrId.toString(16)}) = '$itemValue'"
                                                 )
                                             }
+                                            // DIAGNOSTIC (temporary): plain
+                                            // <Button>/<EditText> with no
+                                            // explicit style get their entire
+                                            // look from whichever of these
+                                            // the active theme resolves to -
+                                            // trace every style (not just
+                                            // Theme.*) that sets any of them,
+                                            // to see what Theme.AutoClicker's
+                                            // chain actually resolves to for
+                                            // widget appearance specifically,
+                                            // since the M3-only @macro
+                                            // failures already confirmed
+                                            // unrelated (AutoClicker's theme
+                                            // chain is MaterialComponents,
+                                            // never touches ThemeOverlay.
+                                            // Material3.*).
+                                            if (itemName in setOf(
+                                                    "buttonStyle", "editTextStyle", "colorAccent",
+                                                    "colorControlNormal", "colorControlActivated",
+                                                    "colorButtonNormal", "colorPrimary"
+                                                )
+                                            ) {
+                                                log.appendLine(
+                                                    "TRACE-WIDGET style '$name' sets item '$itemName' " +
+                                                        "(attrId=0x${attrId.toString(16)}) = '$itemValue'"
+                                                )
+                                            }
                                         } else {
                                             log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
                                         }
