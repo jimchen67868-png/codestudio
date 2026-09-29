@@ -431,6 +431,51 @@ object ResourceCompiler {
                                 val xmlDoc = ResXmlDocument()
                                 xmlDoc.setPackageBlock(packageBlock)
                                 xmlDoc.parse(parser)
+
+                                // DIAGNOSTIC (temporary): encodeStyleItemValue()
+                                // has explicit, hand-written detection for a
+                                // leading '?' (theme-attribute reference,
+                                // e.g. "?attr/colorButtonNormal") because
+                                // ARSCLib doesn't auto-detect that for style
+                                // <item> values. This generic XML-compile
+                                // path (used for color state lists, drawables,
+                                // menus - everything that ISN'T a <style>
+                                // item) has no equivalent special-casing; it
+                                // relies entirely on whatever ARSCLib's
+                                // internal attribute encoder does by default
+                                // during parse(). Suspected root cause of the
+                                // "renders but wrong colors" symptom: a
+                                // silent mis-encode produces zero warnings
+                                // (a string encoding never fails), which
+                                // matches everything seen in these logs so
+                                // far. Confirm directly: after parsing any
+                                // file whose raw text contains "?attr/" or
+                                // "?android:attr/", walk every attribute via
+                                // recursiveAttributes() (confirmed on
+                                // ResXmlDocument via javap) and log the raw
+                                // valueType - ValueType.ATTRIBUTE means it
+                                // encoded correctly as a theme reference;
+                                // ValueType.STRING means it silently became
+                                // a literal string instead, which is wrong.
+                                try {
+                                    val rawText = resFile.readText()
+                                    if (rawText.contains("?attr/") || rawText.contains("?android:attr/")) {
+                                        val attrsIter = xmlDoc.recursiveAttributes()
+                                        while (attrsIter.hasNext()) {
+                                            val attr = attrsIter.next() as com.reandroid.arsc.chunk.xml.ResXmlAttribute
+                                            val decoded = attr.decodeValue()
+                                            if (decoded != null && (decoded.startsWith("?attr/") || decoded.startsWith("?android:attr/"))) {
+                                                log.appendLine(
+                                                    "TRACE-THEME-ATTR ${resFile.name}: attribute '${attr.name}' " +
+                                                        "valueType=${attr.valueType} decodeValue=$decoded"
+                                                )
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    log.appendLine("Warning: TRACE-THEME-ATTR check failed for ${resFile.path}: ${e.message}")
+                                }
+
                                 xmlDoc.writeBytes(compiledFile)
                             }
                             fileResources[apkPath] = compiledFile
