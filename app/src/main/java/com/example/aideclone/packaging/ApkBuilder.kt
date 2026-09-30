@@ -62,6 +62,28 @@ object ApkBuilder {
             }
 
             log.appendLine("Dexing ${classesDir.path} ...")
+            // DIAGNOSTIC (temporary): extraLibraries is whatever jars
+            // happen to be sitting in AIDEClone's own private
+            // filesDir/sdk/libs at build time (importedLibraryJars() in
+            // MainActivity.kt) - not inspectable from Termux, since
+            // that's app-private storage. Logging the exact list here
+            // (which build-log.txt IS accessible for, since it's
+            // written to the project's own folder on shared storage) is
+            // the only way to confirm whether every jar AppCompat's
+            // compat view-inflation needs (appcompat, appcompat-
+            // resources, core, material, etc.) actually got imported
+            // and passed through to D8 - a real device test showed
+            // AppCompat's theme resolves correctly in resources.arsc,
+            // widgets DO render (a literal hardcoded background color
+            // shows up fine), yet plain <Button>/<EditText> stay
+            // completely unstyled - consistent with AppCompatDelegate's
+            // runtime view-inflation hook silently no-op'ing because a
+            // class it needs isn't present in classes.dex, rather than
+            // anything in resource compilation itself.
+            log.appendLine("extraLibraries passed to D8 (${extraLibraries.size} jar(s)):")
+            extraLibraries.forEach { jar ->
+                log.appendLine("  - ${jar.name} (${jar.length()} bytes)")
+            }
             val dexOutputDir = File(projectRoot, "build/dex")
             val dexResult = DexEngine.dex(classesDir, dexOutputDir, extraLibraries = extraLibraries)
             log.append(dexResult.log)
