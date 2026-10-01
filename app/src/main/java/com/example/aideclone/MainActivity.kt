@@ -9,7 +9,6 @@ import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
@@ -92,21 +91,6 @@ class MainActivity : AppCompatActivity() {
         return kotlinStdlibFile
     }
 
-    private val importAndroidJarLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) importAndroidJar(uri)
-        }
-
-    private val importFrameworkResourcesLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) importFrameworkResources(uri)
-        }
-
-    private val importLibraryJarLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-            if (uris.isNotEmpty()) importLibraryJars(uris)
-        }
-
     private val prefs by lazy { getSharedPreferences("aideclone", MODE_PRIVATE) }
 
     companion object {
@@ -182,9 +166,24 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             MENU_COMPILE -> { runCompile { }; true }
             MENU_BUILD_APK -> { runBuildApk(); true }
-            MENU_IMPORT_SDK -> { importAndroidJarLauncher.launch(arrayOf("*/*")); true }
-            MENU_IMPORT_FRAMEWORK -> { importFrameworkResourcesLauncher.launch(arrayOf("*/*")); true }
-            MENU_IMPORT_LIBRARY -> { importLibraryJarLauncher.launch(arrayOf("*/*")); true }
+            MENU_IMPORT_SDK -> {
+                FilePickerDialog.show(this, filesDir, prefs, "Select android.jar", extensionFilter = listOf("jar")) { file ->
+                    importAndroidJar(file)
+                }
+                true
+            }
+            MENU_IMPORT_FRAMEWORK -> {
+                FilePickerDialog.show(this, filesDir, prefs, "Select framework-res.apk", extensionFilter = listOf("apk")) { file ->
+                    importFrameworkResources(file)
+                }
+                true
+            }
+            MENU_IMPORT_LIBRARY -> {
+                FilePickerDialog.show(this, filesDir, prefs, "Select library .jar or .aar", extensionFilter = listOf("jar", "aar")) { file ->
+                    importLibraryJars(listOf(file))
+                }
+                true
+            }
             MENU_MANAGE_LIBRARIES -> { showManageLibrariesDialog(); true }
             MENU_RAW_OUTPUT -> {
                 val raw = CompileResultStore.lastResult?.rawOutput
@@ -453,12 +452,12 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Import android.jar ----
 
-    private fun importFrameworkResources(uri: Uri) {
+    private fun importFrameworkResources(file: File) {
         Toast.makeText(this, "Importing framework resources…", Toast.LENGTH_SHORT).show()
         backgroundExecutor.execute {
             try {
                 frameworkApkFile.parentFile?.mkdirs()
-                contentResolver.openInputStream(uri)?.use { input ->
+                file.inputStream().use { input ->
                     frameworkApkFile.outputStream().use { output -> input.copyTo(output) }
                 }
                 runOnUiThread {
@@ -472,12 +471,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun importAndroidJar(uri: Uri) {
+    private fun importAndroidJar(file: File) {
         Toast.makeText(this, "Importing android.jar…", Toast.LENGTH_SHORT).show()
         backgroundExecutor.execute {
             try {
                 sdkJarFile.parentFile?.mkdirs()
-                contentResolver.openInputStream(uri)?.use { input ->
+                file.inputStream().use { input ->
                     sdkJarFile.outputStream().use { output -> input.copyTo(output) }
                 }
                 runOnUiThread {
@@ -528,10 +527,10 @@ class MainActivity : AppCompatActivity() {
      * AndroidX libraries) crash at runtime with ClassNotFoundException
      * for their own R class, even though their code compiles fine.
      */
-    private fun importAarLibrary(uri: Uri, displayName: String) {
+    private fun importAarLibrary(sourceFile: File, displayName: String) {
         val baseName = displayName.removeSuffix(".aar")
         val tempAar = File(cacheDir, "$baseName-import.aar")
-        contentResolver.openInputStream(uri)?.use { input ->
+        sourceFile.inputStream().use { input ->
             tempAar.outputStream().use { output -> input.copyTo(output) }
         }
 
@@ -574,30 +573,30 @@ class MainActivity : AppCompatActivity() {
         tempAar.delete()
     }
 
-    private fun importLibraryJars(uris: List<Uri>) {
-        Toast.makeText(this, "Importing ${uris.size} librar${if (uris.size == 1) "y" else "ies"}…", Toast.LENGTH_SHORT).show()
+    private fun importLibraryJars(files: List<File>) {
+        Toast.makeText(this, "Importing ${files.size} librar${if (files.size == 1) "y" else "ies"}…", Toast.LENGTH_SHORT).show()
         backgroundExecutor.execute {
             var successCount = 0
             val failures = mutableListOf<String>()
-            for (uri in uris) {
+            for (file in files) {
                 try {
-                    val displayName = queryDisplayName(uri) ?: "library-${System.currentTimeMillis()}"
+                    val displayName = file.name
                     if (displayName.endsWith(".aar")) {
-                        importAarLibrary(uri, displayName)
+                        importAarLibrary(file, displayName)
                     } else {
                         val safeName = if (displayName.endsWith(".jar")) displayName else "$displayName.jar"
                         val destFile = File(libraryJarsDir, safeName)
-                        contentResolver.openInputStream(uri)?.use { input ->
+                        file.inputStream().use { input ->
                             destFile.outputStream().use { output -> input.copyTo(output) }
                         }
                     }
                     successCount++
                 } catch (e: Exception) {
-                    failures.add("${queryDisplayName(uri) ?: uri}: ${e.message}")
+                    failures.add("${file.name}: ${e.message}")
                 }
             }
             runOnUiThread {
-                val summary = "Imported $successCount/${uris.size} librar${if (uris.size == 1) "y" else "ies"}"
+                val summary = "Imported $successCount/${files.size} librar${if (files.size == 1) "y" else "ies"}"
                 if (failures.isEmpty()) {
                     Toast.makeText(this, summary, Toast.LENGTH_SHORT).show()
                 } else {
@@ -605,17 +604,6 @@ class MainActivity : AppCompatActivity() {
                     showBuildLog("$summary\n\nFailures:\n${failures.joinToString("\n")}")
                 }
             }
-        }
-    }
-
-    private fun queryDisplayName(uri: Uri): String? {
-        return try {
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (cursor.moveToFirst() && nameIndex >= 0) cursor.getString(nameIndex) else null
-            }
-        } catch (_: Exception) {
-            null
         }
     }
 
