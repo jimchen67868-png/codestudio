@@ -179,8 +179,8 @@ class MainActivity : AppCompatActivity() {
                 true
             }
             MENU_IMPORT_LIBRARY -> {
-                FilePickerDialog.show(this, filesDir, prefs, "Select library .jar or .aar", extensionFilter = listOf("jar", "aar")) { file ->
-                    importLibraryJars(listOf(file))
+                FilePickerDialog.showMulti(this, filesDir, prefs, "Select library .jar or .aar files", extensionFilter = listOf("jar", "aar")) { files ->
+                    importLibraryJars(files)
                 }
                 true
             }

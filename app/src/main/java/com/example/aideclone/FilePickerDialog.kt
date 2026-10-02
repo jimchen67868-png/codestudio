@@ -71,6 +71,25 @@ object FilePickerDialog {
         }
     }
 
+    private fun resolveRoots(context: Context, appDefaultDir: File): List<Pair<String, File>> {
+        val roots = mutableListOf<Pair<String, File>>()
+        roots.add("App Storage (always accessible)" to appDefaultDir)
+
+        val storageManager = context.getSystemService(Context.STORAGE_SERVICE) as? StorageManager
+        storageManager?.storageVolumes?.forEach { volume ->
+            val dir = volumeRootDir(volume)
+            if (dir != null) {
+                val label = if (volume.isPrimary) {
+                    "Internal Storage"
+                } else {
+                    volume.getDescription(context) ?: "SD Card"
+                }
+                roots.add(label to dir)
+            }
+        }
+        return roots
+    }
+
     /**
      * @param appDefaultDir shown as a first, always-accessible option,
      *        same as FolderPickerDialog — useful since browsing outside
@@ -87,22 +106,7 @@ object FilePickerDialog {
         extensionFilter: List<String>? = null,
         onPicked: (File) -> Unit
     ) {
-        val roots = mutableListOf<Pair<String, File>>()
-        roots.add("App Storage (always accessible)" to appDefaultDir)
-
-        val storageManager = context.getSystemService(Context.STORAGE_SERVICE) as? StorageManager
-        storageManager?.storageVolumes?.forEach { volume ->
-            val dir = volumeRootDir(volume)
-            if (dir != null) {
-                val label = if (volume.isPrimary) {
-                    "Internal Storage"
-                } else {
-                    volume.getDescription(context) ?: "SD Card"
-                }
-                roots.add(label to dir)
-            }
-        }
-
+        val roots = resolveRoots(context, appDefaultDir)
         AlertDialog.Builder(context)
             .setTitle(title)
             .setItems(roots.map { it.first }.toTypedArray()) { _, which ->
@@ -112,26 +116,44 @@ object FilePickerDialog {
             .show()
     }
 
-    private fun showForDir(
+    /**
+     * Same as [show], but lets the user check any number of files within
+     * a single directory before confirming — e.g. picking several
+     * library jars at once. Checked state does NOT carry across
+     * navigating into a different folder; everything resets per
+     * directory shown, to keep this simple.
+     */
+    fun showMulti(
         context: Context,
-        dir: File,
+        appDefaultDir: File,
         prefs: SharedPreferences,
         title: String,
-        extensionFilter: List<String>?,
-        onPicked: (File) -> Unit
+        extensionFilter: List<String>? = null,
+        onPicked: (List<File>) -> Unit
     ) {
-        val currentOrder = SortOrder.fromName(prefs.getString(PREF_SORT_ORDER, null))
+        val roots = resolveRoots(context, appDefaultDir)
+        AlertDialog.Builder(context)
+            .setTitle(title)
+            .setItems(roots.map { it.first }.toTypedArray()) { _, which ->
+                showMultiForDir(context, roots[which].second, prefs, title, extensionFilter, onPicked)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Shared listing logic for both the single-pick and multi-pick browsers. */
+    private fun listEntries(dir: File, extensionFilter: List<String>?, order: SortOrder): Pair<List<String>, List<File?>> {
         val rawList = dir.listFiles()
         val subdirs = sortFiles(
             rawList?.filter { it.isDirectory && !it.name.startsWith(".") } ?: emptyList(),
-            currentOrder
+            order
         )
         val matchingFiles = sortFiles(
             rawList?.filter {
                 it.isFile && !it.name.startsWith(".") &&
                     (extensionFilter == null || it.extension.lowercase() in extensionFilter)
             } ?: emptyList(),
-            currentOrder
+            order
         )
 
         val items = mutableListOf<String>()
@@ -156,6 +178,19 @@ object FilePickerDialog {
             items.add("📄 ${file.name} (${file.length() / 1024} KB)")
             targets.add(file)
         }
+        return items to targets
+    }
+
+    private fun showForDir(
+        context: Context,
+        dir: File,
+        prefs: SharedPreferences,
+        title: String,
+        extensionFilter: List<String>?,
+        onPicked: (File) -> Unit
+    ) {
+        val currentOrder = SortOrder.fromName(prefs.getString(PREF_SORT_ORDER, null))
+        val (items, targets) = listEntries(dir, extensionFilter, currentOrder)
 
         AlertDialog.Builder(context)
             .setTitle("$title\n${dir.absolutePath}")
@@ -172,6 +207,55 @@ object FilePickerDialog {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /**
+     * Multi-select variant: directories still navigate on tap; files
+     * toggle a checkbox instead of picking immediately, confirmed via
+     * the positive button. AlertDialog's multi-choice list fires its
+     * click listener for every row including directories, so a
+     * directory tap is special-cased to dismiss and navigate rather
+     * than being treated as a selection toggle.
+     */
+    private fun showMultiForDir(
+        context: Context,
+        dir: File,
+        prefs: SharedPreferences,
+        title: String,
+        extensionFilter: List<String>?,
+        onPicked: (List<File>) -> Unit
+    ) {
+        val currentOrder = SortOrder.fromName(prefs.getString(PREF_SORT_ORDER, null))
+        val (items, targets) = listEntries(dir, extensionFilter, currentOrder)
+        val checked = BooleanArray(items.size)
+
+        var dialogRef: AlertDialog? = null
+        val builder = AlertDialog.Builder(context)
+            .setTitle("$title\n${dir.absolutePath}\n(check files, then Select)")
+            .setMultiChoiceItems(items.toTypedArray(), checked) { _, which, isChecked ->
+                val target = targets[which]
+                when {
+                    target == null -> checked[which] = false
+                    target.isDirectory -> {
+                        // Navigating away - dismiss this dialog instead of
+                        // treating the tap as a selection.
+                        dialogRef?.dismiss()
+                        showMultiForDir(context, target, prefs, title, extensionFilter, onPicked)
+                    }
+                    else -> checked[which] = isChecked
+                }
+            }
+            .setPositiveButton("Select") { _, _ ->
+                val picked = targets.indices
+                    .filter { checked[it] && targets[it]?.isFile == true }
+                    .mapNotNull { targets[it] }
+                if (picked.isNotEmpty()) onPicked(picked)
+            }
+            .setNeutralButton("Sort: ${currentOrder.label}") { _, _ ->
+                showSortMenu(context, prefs) { showMultiForDir(context, dir, prefs, title, extensionFilter, onPicked) }
+            }
+            .setNegativeButton("Cancel", null)
+        dialogRef = builder.show()
     }
 
     private fun showSortMenu(context: Context, prefs: SharedPreferences, onChanged: () -> Unit) {
