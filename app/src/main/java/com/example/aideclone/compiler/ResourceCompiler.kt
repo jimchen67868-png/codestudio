@@ -638,6 +638,46 @@ object ResourceCompiler {
                 }
             }
 
+            // DIAGNOSTIC (temporary): every specific failure hypothesis
+            // for AutoClicker's unstyled Button/EditText has come back
+            // clean so far (theme resolves, buttonStyle/editTextStyle
+            // encode successfully, generic ?attr/ encoding works, every
+            // AppCompat/Material jar is present in classes.dex) - but
+            // absence of a warning never proved these two styles
+            // actually HAVE real content, only that referencing them by
+            // name didn't throw. StyleBag extends java.util.AbstractMap
+            // (confirmed via javap), so its actual item count and
+            // contents can be read directly and compared against what
+            // real AppCompat ships (which is NOT empty - it sets
+            // background, minWidth/minHeight, padding, textAppearance,
+            // etc.) rather than continuing to infer from warning absence.
+            for (watchName in listOf("Widget.AppCompat.Button", "Widget.AppCompat.EditText")) {
+                val watchEntry = tableBlock.getResource(packageBlock, "style", watchName)
+                if (watchEntry == null) {
+                    log.appendLine("TRACE-WATCHSTYLE '$watchName': NOT FOUND as a registered style resource at all.")
+                } else {
+                    try {
+                        val watchBag = StyleBag.create(watchEntry)
+                        if (watchBag == null) {
+                            log.appendLine("TRACE-WATCHSTYLE '$watchName': entry exists (id=0x${watchEntry.resourceId.toString(16)}) but StyleBag.create() returned null (not a complex/style entry).")
+                        } else {
+                            log.appendLine(
+                                "TRACE-WATCHSTYLE '$watchName' (id=0x${watchEntry.resourceId.toString(16)}) " +
+                                    "parent=0x${watchBag.parentId.toString(16)} itemCount=${watchBag.size}"
+                            )
+                            for ((key, item) in watchBag) {
+                                log.appendLine(
+                                    "  item attrId=0x${key.toString(16)} name=${item.name} " +
+                                        "hasAttributeValue=${item.hasAttributeValue()} valueAsReference=${item.valueAsReference}"
+                                )
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log.appendLine("TRACE-WATCHSTYLE '$watchName': exception reading bag: ${e.message}")
+                    }
+                }
+            }
+
             // --- Generate one R class per package, alongside the
             // project's own sources so the normal compile pass picks
             // them up automatically. Language must match whichever
