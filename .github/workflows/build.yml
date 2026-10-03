@@ -42,6 +42,8 @@ jobs:
           javap -classpath "$JAR" com.reandroid.arsc.value.style.StyleBag
           echo "===== StyleBagItem ====="
           javap -classpath "$JAR" com.reandroid.arsc.value.style.StyleBagItem
+          echo "===== MapBag ====="
+          javap -classpath "$JAR" com.reandroid.arsc.value.bag.MapBag
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
