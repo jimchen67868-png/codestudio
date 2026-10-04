@@ -652,10 +652,18 @@ object ResourceCompiler {
             // background, minWidth/minHeight, padding, textAppearance,
             // etc.) rather than continuing to infer from warning absence.
             for (watchName in listOf("Widget.AppCompat.Button", "Widget.AppCompat.EditText")) {
-                val watchEntry = tableBlock.getResource(packageBlock, "style", watchName)
-                if (watchEntry == null) {
+                // tableBlock.getResource(...) returns a ResourceEntry
+                // wrapper, not the raw Entry StyleBag.create() needs
+                // (confirmed by a real compile error: "Argument type
+                // mismatch: actual type is 'ResourceEntry', but
+                // 'Entry!' was expected"). packageBlock.getOrCreate(...)
+                // - used everywhere else in this file for exactly this
+                // reason - returns the real Entry directly instead.
+                val watchExists = tableBlock.getResource(packageBlock, "style", watchName) != null
+                if (!watchExists) {
                     log.appendLine("TRACE-WATCHSTYLE '$watchName': NOT FOUND as a registered style resource at all.")
                 } else {
+                    val watchEntry = packageBlock.getOrCreate("", "style", watchName)
                     try {
                         val watchBag = StyleBag.create(watchEntry)
                         if (watchBag == null) {
