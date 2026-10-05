@@ -243,7 +243,24 @@ object ResourceCompiler {
                 // plus style/attr. Styles now get real content encoded
                 // (parent chain + <item> values via StyleBag/ValueCoder),
                 // not just an empty registered ID. ---
-                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
+                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }
+                    // Plain "values" (no qualifier suffix) processed first,
+                    // deterministically, across every source - not whatever
+                    // order the filesystem happens to list directories in.
+                    // Real per-qualifier folders (values-v21, values-night,
+                    // ...) conventionally only declare DELTAS from the base
+                    // definition, not full redeclarations - so if one of
+                    // those got processed first under "first-file-wins"
+                    // (the earlier fix for qualifier-folder corruption),
+                    // that sparse delta would win over the real, complete
+                    // base definition. Confirmed via a real build: Widget.
+                    // AppCompat.Button and Widget.AppCompat.EditText both
+                    // resolved with a correct parent but itemCount=0 -
+                    // exactly what a delta-only qualifier variant (which
+                    // only overrides parent, not any items) winning over
+                    // the base would produce.
+                    ?.sortedBy { if (it.name == "values") 0 else 1 }
+                    ?.forEach { valuesDir ->
                     valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
                             val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlFile)
@@ -527,7 +544,24 @@ object ResourceCompiler {
             for (source in sources) {
                 val resDir = source.resDir
                 val pkg = source.packageName
-                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }?.forEach { valuesDir ->
+                resDir.listFiles { f -> f.isDirectory && f.name.startsWith("values") }
+                    // Plain "values" (no qualifier suffix) processed first,
+                    // deterministically, across every source - not whatever
+                    // order the filesystem happens to list directories in.
+                    // Real per-qualifier folders (values-v21, values-night,
+                    // ...) conventionally only declare DELTAS from the base
+                    // definition, not full redeclarations - so if one of
+                    // those got processed first under "first-file-wins"
+                    // (the earlier fix for qualifier-folder corruption),
+                    // that sparse delta would win over the real, complete
+                    // base definition. Confirmed via a real build: Widget.
+                    // AppCompat.Button and Widget.AppCompat.EditText both
+                    // resolved with a correct parent but itemCount=0 -
+                    // exactly what a delta-only qualifier variant (which
+                    // only overrides parent, not any items) winning over
+                    // the base would produce.
+                    ?.sortedBy { if (it.name == "values") 0 else 1 }
+                    ?.forEach { valuesDir ->
                     valuesDir.listFiles { f -> f.extension == "xml" }?.forEach { xmlFile ->
                         try {
                             val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlFile)
