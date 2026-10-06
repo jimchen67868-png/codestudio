@@ -685,6 +685,50 @@ object ResourceCompiler {
             // real AppCompat ships (which is NOT empty - it sets
             // background, minWidth/minHeight, padding, textAppearance,
             // etc.) rather than continuing to infer from warning absence.
+            // DIAGNOSTIC (temporary), round 2: itemCount=0 on the leaf
+            // style persisted even after the values/-first-ordering fix,
+            // meaning that fix's premise (a sparse qualifier delta
+            // winning over the base) was wrong for THIS symptom - though
+            // likely still a correct fix in its own right. Reconsidering:
+            // AndroidX conventionally uses a "Base." wrapper pattern
+            // where the public style name is a thin empty shell and all
+            // real content lives in its parent chain (Base.Widget.
+            // AppCompat.Button -> Platform.Widget.AppCompat.Button ->
+            // ...), so itemCount=0 on the LEAF alone may be completely
+            // normal. Walk the actual parent chain by id (resolved back
+            // to a name via a style id->name map built from everything
+            // already registered) and dump itemCount at every level, to
+            // see where real content lives or confirm the whole chain
+            // genuinely is empty.
+            val globalStyleIdToName = mutableMapOf<Int, String>()
+            for ((_, typeMap) in registry) {
+                typeMap["style"]?.forEach { (styleName, id) -> globalStyleIdToName[id] = styleName }
+            }
+            fun dumpStyleChain(startName: String, maxDepth: Int = 8) {
+                var currentName: String? = startName
+                var depth = 0
+                while (currentName != null && depth < maxDepth) {
+                    val chainEntry = packageBlock.getOrCreate("", "style", currentName)
+                    val chainBag = try { StyleBag.create(chainEntry) } catch (e: Exception) { null }
+                    if (chainBag == null) {
+                        log.appendLine("TRACE-WATCHCHAIN depth=$depth '$currentName': StyleBag.create() returned null")
+                        break
+                    }
+                    log.appendLine(
+                        "TRACE-WATCHCHAIN depth=$depth '$currentName' (id=0x${chainEntry.resourceId.toString(16)}) " +
+                            "itemCount=${chainBag.size} parent=0x${chainBag.parentId.toString(16)}"
+                    )
+                    val parentName = globalStyleIdToName[chainBag.parentId]
+                    if (parentName == null) {
+                        log.appendLine("  (parent id 0x${chainBag.parentId.toString(16)} not in our own registry - likely a framework style, chain walk stops here)")
+                    }
+                    currentName = parentName
+                    depth++
+                }
+            }
+            dumpStyleChain("Widget.AppCompat.Button")
+            dumpStyleChain("Widget.AppCompat.EditText")
+
             for (watchName in listOf("Widget.AppCompat.Button", "Widget.AppCompat.EditText")) {
                 // tableBlock.getResource(...) returns a ResourceEntry
                 // wrapper, not the raw Entry StyleBag.create() needs
