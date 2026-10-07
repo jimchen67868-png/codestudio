@@ -195,6 +195,32 @@ object ResourceCompiler {
                 return null
             }
 
+            // Simple <color>/<dimen>/<bool>/<integer> values must be stored
+            // as typed values, not strings: a color stored as the string
+            // "#FFFFFF" makes Android try to load it as a file path
+            // (".xml extension required") the moment a theme reads it.
+            val pendingRefValues = mutableListOf<Pair<com.reandroid.arsc.value.Entry, String>>()
+            val typedValueTypes = setOf("color", "dimen", "bool", "integer", "fraction")
+            fun setSimpleValue(entry: com.reandroid.arsc.value.Entry?, resType: String, rawText: String) {
+                if (entry == null) return
+                val text = rawText.trim()
+                if (resType !in typedValueTypes || text.isEmpty()) {
+                    entry.setValueAsString(rawText)
+                    return
+                }
+                if (text.startsWith("@") || text.startsWith("?")) {
+                    pendingRefValues.add(entry to text)
+                    return
+                }
+                val r = ValueCoder.encode(text)
+                if (r != null && !r.isError) {
+                    entry.setValueAsRaw(r.valueType, r.value)
+                } else {
+                    log.appendLine("Warning: could not encode $resType value '$text', storing as string")
+                    entry.setValueAsString(rawText)
+                }
+            }
+
             fun resolveStyleParent(rawParentName: String): Int? {
                 val name = rawParentName.removePrefix("android:")
                 if (rawParentName.startsWith("android:")) {
@@ -323,7 +349,7 @@ object ResourceCompiler {
                                         if (itemType.isNotBlank() && name.isNotBlank()) {
                                             val textValue = node.textContent ?: ""
                                             val entry = register(pkg, itemType, name)
-                                            if (textValue.isNotBlank()) entry?.setValueAsString(textValue)
+                                            if (textValue.isNotBlank()) setSimpleValue(entry, itemType, textValue)
                                         }
                                     }
                                     "declare-styleable" -> {
@@ -354,7 +380,7 @@ object ResourceCompiler {
                                         val name = node.getAttribute("name")
                                         if (name.isBlank()) continue
                                         val textValue = node.textContent ?: ""
-                                        register(pkg, resType, name)?.setValueAsString(textValue)
+                                        setSimpleValue(register(pkg, resType, name), resType, textValue)
                                     }
                                 }
                             }
@@ -561,6 +587,15 @@ object ResourceCompiler {
             // non-determinism, at the cost of not honoring qualifier-
             // specific overrides for styles - acceptable for now given
             // this app doesn't depend on config-specific theming.
+            for ((refEntry, refText) in pendingRefValues) {
+                val rr = if (refText.startsWith("@")) ValueCoder.encodeReference(tableBlock, refText) else null
+                if (rr != null && !rr.isError) {
+                    refEntry.setValueAsRaw(rr.valueType, rr.value)
+                } else {
+                    log.appendLine("Warning: could not resolve reference value '$refText', storing as string")
+                    refEntry.setValueAsString(refText)
+                }
+            }
             val encodedStyleNames = mutableSetOf<String>()
             for (source in sources) {
                 val resDir = source.resDir
