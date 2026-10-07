@@ -492,23 +492,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showManageLibrariesDialog() {
-        val jars = importedLibraryJars().sortedBy { it.name }
-        if (jars.isEmpty()) {
+        // One entry per library name: its classes jar (sdk/libs) and/or its
+        // extracted resources (sdk/libs-res). An imported .aar produces
+        // both under the same base name; a plain .jar only the first.
+        data class Lib(val base: String, val jar: File?, val res: File?)
+        val jarsByBase = importedLibraryJars().associateBy { it.nameWithoutExtension }
+        val resByBase = (libraryResDir.listFiles { f -> f.isDirectory } ?: emptyArray()).associateBy { it.name }
+        val libs = (jarsByBase.keys + resByBase.keys).toSortedSet().map { Lib(it, jarsByBase[it], resByBase[it]) }
+        if (libs.isEmpty()) {
             Toast.makeText(this, "No extra libraries imported yet", Toast.LENGTH_SHORT).show()
             return
         }
-        val labels = jars.map { "${it.name} (${it.length() / 1024} KB)" }.toTypedArray()
+        val labels = libs.map { lib ->
+            val kind = when {
+                lib.res != null && lib.jar != null -> "AAR"
+                lib.res != null -> "AAR, resources only"
+                else -> "JAR"
+            }
+            val size = lib.jar?.let { " ${it.length() / 1024} KB" } ?: ""
+            "${lib.base} ($kind$size)"
+        }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Manage Libraries")
             .setItems(labels) { _, which ->
-                val jar = jars[which]
+                val lib = libs[which]
                 AlertDialog.Builder(this)
-                    .setTitle("Remove ${jar.name}?")
+                    .setTitle("Remove ${lib.base}?")
                     .setPositiveButton("Remove") { _, _ ->
-                        if (jar.delete()) {
-                            Toast.makeText(this, "Removed ${jar.name}", Toast.LENGTH_SHORT).show()
+                        val jarOk = lib.jar?.delete() ?: true
+                        val resOk = lib.res?.deleteRecursively() ?: true
+                        if (jarOk && resOk) {
+                            Toast.makeText(this, "Removed ${lib.base}", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(this, "Failed to remove ${jar.name}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, "Failed to fully remove ${lib.base}", Toast.LENGTH_SHORT).show()
                         }
                     }
                     .setNegativeButton("Cancel", null)
