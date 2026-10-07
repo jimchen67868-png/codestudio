@@ -601,7 +601,10 @@ object ResourceCompiler {
                                     // via isolated round-trip test).
                                     entry.ensureComplex(true)
                                     val styleBag = StyleBag.create(entry)
-                                    val parentName = node.getAttribute("parent")
+                                    // aapt2 rule: no parent attribute + dotted name => implicit parent is
+                                    // the name up to the last '.'. An explicit parent="" means no parent.
+                                    val parentName = if (node.hasAttribute("parent")) node.getAttribute("parent")
+                                        else if (name.contains('.')) name.substringBeforeLast('.') else ""
                                     if (parentName.isNotBlank()) {
                                         val parentId = resolveStyleParent(parentName)
                                         if (parentId != null) {
