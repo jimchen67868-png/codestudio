@@ -836,7 +836,114 @@ object ResourceCompiler {
             val isKotlinProject = projectRoot.walkTopDown()
                 .any { it.isFile && it.extension == "kt" && !it.path.contains("/build/") }
 
+            // ---- Shared base classes for library R classes. A real Gradle
+            // build gives every library R class the resources its code
+            // reads from OTHER libraries (e.g. Material reading AppCompat's
+            // R.attr.theme). Rather than copy every field into every
+            // library's R, emit each type's merged fields once and let each
+            // library's R.<type> extend it; static field lookup walks
+            // superclasses, so getstatic R$attr.theme still resolves. ----
+            val mergedByType = LinkedHashMap<String, LinkedHashMap<String, Int>>()
+            for ((_, tm) in registry) {
+                for ((type, entries) in tm) {
+                    val dst = mergedByType.getOrPut(type) { LinkedHashMap() }
+                    for ((n, id) in entries) if (!dst.containsKey(n)) dst[n] = id
+                }
+            }
+            val mergedAttrIds: Map<String, Int> = mergedByType["attr"] ?: LinkedHashMap()
+            val mergedStyleables = LinkedHashMap<String, List<Pair<String, Int>>>()
+            for ((_, sm) in styleables) {
+                for ((sname, anames) in sm) {
+                    if (mergedStyleables.containsKey(sname)) continue
+                    mergedStyleables[sname] = anames
+                        .mapNotNull { n -> mergedAttrIds[n]?.let { id -> n to id } }
+                        .sortedBy { it.second }
+                }
+            }
+            val allLibTypes = mergedByType.keys.toMutableList().also { if (!it.contains("styleable")) it.add("styleable") }
+            val baseDir = File(projectRoot, "build/generated/java/aideclone/merged")
+            baseDir.mkdirs()
+            for (type in allLibTypes) {
+                val cls = "M_" + sanitizeIdentifier(type)
+                val seen = HashSet<String>()
+                val baseSrc = buildString {
+                    if (isKotlinProject) {
+                        appendLine("package aideclone.merged")
+                        appendLine()
+                        appendLine("open class $cls {")
+                        appendLine("    companion object {")
+                        if (type == "styleable") {
+                            for ((sname, sorted) in mergedStyleables) {
+                                val safe = sanitizeIdentifier(sname)
+                                if (!seen.add(safe)) continue
+                                appendLine("        @JvmField val $safe = intArrayOf(${sorted.joinToString(", ") { it.second.toString() }})")
+                                sorted.forEachIndexed { i, (an, _) ->
+                                    val f = safe + "_" + sanitizeIdentifier(an)
+                                    if (seen.add(f)) appendLine("        const val $f = $i")
+                                }
+                            }
+                        } else {
+                            for ((n, id) in (mergedByType[type] ?: emptyMap<String, Int>())) {
+                                val f = sanitizeIdentifier(n)
+                                if (seen.add(f)) appendLine("        const val $f = $id")
+                            }
+                        }
+                        appendLine("    }")
+                        appendLine("}")
+                    } else {
+                        appendLine("package aideclone.merged;")
+                        appendLine()
+                        appendLine("public class $cls {")
+                        if (type == "styleable") {
+                            for ((sname, sorted) in mergedStyleables) {
+                                val safe = sanitizeIdentifier(sname)
+                                if (!seen.add(safe)) continue
+                                appendLine("    public static final int[] $safe = { ${sorted.joinToString(", ") { it.second.toString() }} };")
+                                sorted.forEachIndexed { i, (an, _) ->
+                                    val f = safe + "_" + sanitizeIdentifier(an)
+                                    if (seen.add(f)) appendLine("    public static final int $f = $i;")
+                                }
+                            }
+                        } else {
+                            for ((n, id) in (mergedByType[type] ?: emptyMap<String, Int>())) {
+                                val f = sanitizeIdentifier(n)
+                                if (seen.add(f)) appendLine("    public static final int $f = $id;")
+                            }
+                        }
+                        appendLine("}")
+                    }
+                }
+                File(baseDir, cls + (if (isKotlinProject) ".kt" else ".java")).writeText(baseSrc)
+            }
+            log.appendLine("Generated merged R base classes: ${allLibTypes.size} types, ${mergedAttrIds.size} attrs")
+
             for ((pkg, typeMap) in registry) {
+                if (pkg != packageName) {
+                    val libSrc = buildString {
+                        if (isKotlinProject) {
+                            appendLine("package $pkg")
+                            appendLine()
+                            appendLine("object R {")
+                            for (type in allLibTypes) {
+                                appendLine("    object $type : aideclone.merged.M_${sanitizeIdentifier(type)}()")
+                            }
+                            appendLine("}")
+                        } else {
+                            appendLine("package $pkg;")
+                            appendLine()
+                            appendLine("public final class R {")
+                            for (type in allLibTypes) {
+                                appendLine("    public static final class $type extends aideclone.merged.M_${sanitizeIdentifier(type)} {}")
+                            }
+                            appendLine("}")
+                        }
+                    }
+                    val libFile = File(projectRoot, "build/generated/java/${pkg.replace('.', '/')}/R." + (if (isKotlinProject) "kt" else "java"))
+                    libFile.parentFile?.mkdirs()
+                    libFile.writeText(libSrc)
+                    log.appendLine("Generated ${libFile.name} for $pkg (extends merged bases): ${libFile.path}")
+                    continue
+                }
                 val pkgAttrIds = typeMap["attr"] ?: emptyMap()
                 val pkgStyleables = styleables[pkg]
 
