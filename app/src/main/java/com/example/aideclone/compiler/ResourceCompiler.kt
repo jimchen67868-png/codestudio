@@ -443,7 +443,7 @@ object ResourceCompiler {
                             compiledFile.parentFile?.mkdirs()
                             val parser = KXmlParser()
                             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-                            FileInputStream(resFile).use { input ->
+                            FileInputStream(stripToolsAttrs(resFile)).use { input ->
                                 parser.setInput(input, null)
                                 val xmlDoc = ResXmlDocument()
                                 xmlDoc.setPackageBlock(packageBlock)
@@ -860,6 +860,25 @@ object ResourceCompiler {
             log.appendLine("Resource compilation failed: $t")
             log.appendLine(t.stackTraceToString())
             ResourceCompileResult(success = false, rawOutput = log.toString())
+        }
+    }
+
+    /**
+     * aapt2 drops the tools: namespace entirely at compile time. ARSCLib
+     * doesn't, and fails on tools:ignore / tools:targetApi / etc. Hand the
+     * parser a stripped copy so these files compile instead of falling
+     * back to a raw (unloadable) copy.
+     */
+    private fun stripToolsAttrs(src: File): File {
+        val text = src.readText()
+        if (!text.contains("tools:")) return src
+        val cleaned = text
+            .replace(Regex("""\s+tools:[A-Za-z_]+\s*=\s*("[^"]*"|'[^']*')"""), "")
+            .replace(Regex("""\s+xmlns:tools\s*=\s*("[^"]*"|'[^']*')"""), "")
+        if (cleaned == text) return src
+        return File.createTempFile("res_", ".xml").apply {
+            writeText(cleaned)
+            deleteOnExit()
         }
     }
 }
