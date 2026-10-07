@@ -625,6 +625,9 @@ object ResourceCompiler {
                                             log.appendLine("Warning: could not resolve parent '$parentName' for style '$name'")
                                         }
                                     }
+                                    // aapt2 sorts a style's entries by attr ID; Android's bag
+                                    // merge with the parent style assumes that order.
+                                    val pendingItems = java.util.TreeMap<Int, StyleBagItem>()
                                     val itemNodes = node.childNodes
                                     for (j in 0 until itemNodes.length) {
                                         val itemNode = itemNodes.item(j)
@@ -639,7 +642,7 @@ object ResourceCompiler {
                                         val itemValue = itemNode.textContent ?: ""
                                         val bagItem = encodeStyleItemValue(itemValue)
                                         if (bagItem != null) {
-                                            styleBag.put(attrId, bagItem)
+                                            pendingItems[attrId] = bagItem
                                             // DIAGNOSTIC (temporary): windowActionBar
                                             // is the single attr createSubDecor()
                                             // checks for to decide "is this an
@@ -682,6 +685,7 @@ object ResourceCompiler {
                                             log.appendLine("Warning: could not encode value '$itemValue' for '$itemName' in style '$name'")
                                         }
                                     }
+                                    for ((k, v) in pendingItems) styleBag.put(k, v)
                                 } catch (e: Exception) {
                                     log.appendLine("Warning: failed to encode style content for '$name': ${e.message}")
                                 }
