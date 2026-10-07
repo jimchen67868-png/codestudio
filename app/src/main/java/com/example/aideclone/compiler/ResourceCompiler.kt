@@ -181,8 +181,25 @@ object ResourceCompiler {
             // lookup path is needed here — same mechanism, just verified for
             // this specific case (parent-by-name) via an isolated round-trip
             // test rather than assumed from that other evidence alone.
+            // Looks up ONLY in the attached framework tables (package id
+            // 0x01). getResource(packageBlock, ...) searches local
+            // packages first, so AppCompat/Material attrs that share a
+            // name with a framework attr (buttonStyle, editTextStyle,
+            // colorAccent, ...) silently shadowed the android: ones.
+            fun resolveFramework(type: String, name: String): Int? {
+                for (fw in tableBlock.frameworks()) {
+                    val pkg = fw.getPackageBlockById(0x01) ?: continue
+                    val id = pkg.getResource(type, name)?.resourceId
+                    if (id != null && id != 0) return id
+                }
+                return null
+            }
+
             fun resolveStyleParent(rawParentName: String): Int? {
                 val name = rawParentName.removePrefix("android:")
+                if (rawParentName.startsWith("android:")) {
+                    resolveFramework("style", name)?.let { return it }
+                }
                 return tableBlock.getResource(packageBlock, "style", name)?.resourceId
             }
 
@@ -190,6 +207,9 @@ object ResourceCompiler {
             // Same android: stripping as resolveStyleParent, for the same reason.
             fun resolveAttrName(rawAttrName: String): Int? {
                 val name = rawAttrName.removePrefix("android:")
+                if (rawAttrName.startsWith("android:")) {
+                    resolveFramework("attr", name)?.let { return it }
+                }
                 return tableBlock.getResource(packageBlock, "attr", name)?.resourceId
             }
 
@@ -216,10 +236,11 @@ object ResourceCompiler {
                     // round-trip test, only StyleBagItem.attribute(int)'s
                     // existence was confirmed via javap. Real-build output
                     // is what will actually validate this one.
+                    val isAndroidRef = trimmed.startsWith("?android:")
                     val attrRef = trimmed.removePrefix("?")
                         .removePrefix("android:attr/")
                         .removePrefix("attr/")
-                    val attrId = resolveAttrName(attrRef) ?: return null
+                    val attrId = resolveAttrName((if (isAndroidRef) "android:" else "") + attrRef) ?: return null
                     return StyleBagItem.attribute(attrId)
                 }
 
