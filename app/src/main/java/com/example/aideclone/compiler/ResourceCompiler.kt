@@ -244,7 +244,34 @@ object ResourceCompiler {
             // ARSCLib-1.4.0 for: color, dimension, boolean, int, float,
             // @-reference, and plain-string values. Returns null (with a
             // log line, left to the caller) if nothing worked.
-            fun encodeStyleItemValue(rawValue: String): StyleBagItem? {
+            // Enum/flag attrs (textStyle=bold, gravity=center, ellipsize=end,
+            // ...) must be encoded through the attr's own symbol table; the
+            // raw word "bold" stored as a string crashes TypedArray.getInt
+            // with NumberFormatException at inflate time.
+            fun encodeEnumOrFlag(itemName: String, text: String): com.reandroid.arsc.coder.EncodeResult? {
+                return try {
+                    val isAndroid = itemName.startsWith("android:")
+                    val attrName = itemName.removePrefix("android:")
+                    var entry: com.reandroid.arsc.value.Entry? = null
+                    if (isAndroid) {
+                        for (fw in tableBlock.frameworks()) {
+                            entry = fw.getPackageBlockById(0x01)?.getEntry("attr", attrName)
+                            if (entry != null) break
+                        }
+                    } else {
+                        entry = packageBlock.getEntry("attr", attrName)
+                    }
+                    if (entry == null) return null
+                    val attrBag = com.reandroid.arsc.value.attribute.AttributeBag.create(entry)
+                    if (attrBag == null || !attrBag.isEnumOrFlag) return null
+                    val r = attrBag.encodeEnumOrFlagValue(text)
+                    if (r != null && !r.isError) r else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            fun encodeStyleItemValue(rawValue: String, itemName: String = ""): StyleBagItem? {
                 val trimmed = rawValue.trim()
                 if (trimmed.isEmpty()) return null
 
@@ -270,6 +297,10 @@ object ResourceCompiler {
                     return StyleBagItem.attribute(attrId)
                 }
 
+                if (itemName.isNotEmpty()) {
+                    val enumResult = encodeEnumOrFlag(itemName, trimmed)
+                    if (enumResult != null) return StyleBagItem.encoded(enumResult)
+                }
                 val result = ValueCoder.encode(trimmed)
                 if (result != null && !result.isError) return StyleBagItem.encoded(result)
 
@@ -678,7 +709,7 @@ object ResourceCompiler {
                                             continue
                                         }
                                         val itemValue = itemNode.textContent ?: ""
-                                        val bagItem = encodeStyleItemValue(itemValue)
+                                        val bagItem = encodeStyleItemValue(itemValue, itemName)
                                         if (bagItem != null) {
                                             pendingItems[attrId] = bagItem
                                             // DIAGNOSTIC (temporary): windowActionBar
