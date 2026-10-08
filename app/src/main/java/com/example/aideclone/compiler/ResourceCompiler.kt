@@ -270,8 +270,11 @@ object ResourceCompiler {
             }
 
             fun resolveStyleParent(rawParentName: String): Int? {
-                val name = rawParentName.removePrefix("android:")
-                if (rawParentName.startsWith("android:")) {
+                // Accepts "Foo", "@style/Foo", "android:Foo", "@android:style/Foo".
+                val t = rawParentName.trim().removePrefix("@")
+                val isAndroid = t.startsWith("android:")
+                val name = t.removePrefix("android:").removePrefix("style/")
+                if (isAndroid) {
                     resolveFramework("style", name)?.let { return it }
                 }
                 return tableBlock.getResource(packageBlock, "style", name)?.resourceId
@@ -364,7 +367,7 @@ object ResourceCompiler {
                     // is what will actually validate this one.
                     val isAndroidRef = trimmed.startsWith("?android:")
                     val attrRef = trimmed.removePrefix("?")
-                        .removePrefix("android:attr/")
+                        .removePrefix("android:")
                         .removePrefix("attr/")
                     val attrId = resolveAttrName((if (isAndroidRef) "android:" else "") + attrRef) ?: return null
                     return StyleBagItem.attribute(attrId)
