@@ -527,7 +527,12 @@ object ResourceCompiler {
                             // Non-XML file resources (png/etc.) need no
                             // compilation and carry no forward-reference
                             // risk, so they can be finalized right here.
-                            fileResources[apkPath] = resFile
+                            if (resFile.name.endsWith(".9.png")) {
+                                val npOut = File(projectRoot, "build/compiled-res/$apkPath")
+                                fileResources[apkPath] = if (convertNinePatch(resFile, npOut, log)) npOut else resFile
+                            } else {
+                                fileResources[apkPath] = resFile
+                            }
                         }
                     }
                 }
@@ -1109,6 +1114,113 @@ object ResourceCompiler {
             log.appendLine("Resource compilation failed: $t")
             log.appendLine(t.stackTraceToString())
             ResourceCompileResult(success = false, rawOutput = log.toString())
+        }
+    }
+
+    /**
+     * Converts a source nine-patch (foo.9.png, with its 1px marker border)
+     * into what aapt2 emits: border cropped off, plus a binary npTc chunk
+     * holding stretch regions and padding. Without npTc, Android throws
+     * "<nine-patch> requires a valid 9-patch source image".
+     */
+    private fun convertNinePatch(src: File, dst: File, log: StringBuilder): Boolean {
+        return try {
+            val opts = android.graphics.BitmapFactory.Options()
+            opts.inScaled = false
+            opts.inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+            val bmp = android.graphics.BitmapFactory.decodeFile(src.path, opts)
+            if (bmp == null) {
+                log.appendLine("Warning: could not decode nine-patch ${src.name}")
+                return false
+            }
+            val w = bmp.width
+            val h = bmp.height
+            if (w < 3 || h < 3) {
+                log.appendLine("Warning: nine-patch ${src.name} too small (${w}x$h)")
+                return false
+            }
+            val cw = w - 2
+            val ch = h - 2
+            val black = 0xFF000000.toInt()
+            fun runs(count: Int, at: (Int) -> Int): List<IntArray> {
+                val out = mutableListOf<IntArray>()
+                var start = -1
+                for (i in 0 until count) {
+                    val m = at(i) == black
+                    if (m && start < 0) start = i
+                    if (!m && start >= 0) { out.add(intArrayOf(start, i)); start = -1 }
+                }
+                if (start >= 0) out.add(intArrayOf(start, count))
+                return out
+            }
+            val xr = runs(cw) { bmp.getPixel(it + 1, 0) }
+            val yr = runs(ch) { bmp.getPixel(0, it + 1) }
+            val pxr = runs(cw) { bmp.getPixel(it + 1, h - 1) }
+            val pyr = runs(ch) { bmp.getPixel(w - 1, it + 1) }
+            val xd = ArrayList<Int>()
+            for (r in xr) { xd.add(r[0]); xd.add(r[1]) }
+            if (xd.isEmpty()) { xd.add(0); xd.add(cw) }
+            val yd = ArrayList<Int>()
+            for (r in yr) { yd.add(r[0]); yd.add(r[1]) }
+            if (yd.isEmpty()) { yd.add(0); yd.add(ch) }
+            val padL = if (pxr.isEmpty()) 0 else pxr.first()[0]
+            val padR = if (pxr.isEmpty()) 0 else cw - pxr.last()[1]
+            val padT = if (pyr.isEmpty()) 0 else pyr.first()[0]
+            val padB = if (pyr.isEmpty()) 0 else ch - pyr.last()[1]
+            val nc = (xd.size + 1) * (yd.size + 1)
+            if (xd.size > 255 || yd.size > 255 || nc > 255) {
+                log.appendLine("Warning: nine-patch ${src.name} has too many regions (x=${xd.size} y=${yd.size})")
+                return false
+            }
+            val body = java.io.ByteArrayOutputStream()
+            val d = java.io.DataOutputStream(body)
+            d.writeByte(1)
+            d.writeByte(xd.size)
+            d.writeByte(yd.size)
+            d.writeByte(nc)
+            d.writeInt(0)
+            d.writeInt(0)
+            d.writeInt(padL)
+            d.writeInt(padR)
+            d.writeInt(padT)
+            d.writeInt(padB)
+            d.writeInt(0)
+            for (v in xd) d.writeInt(v)
+            for (v in yd) d.writeInt(v)
+            for (i in 0 until nc) d.writeInt(1)
+            d.flush()
+            val npData = body.toByteArray()
+
+            val cropped = android.graphics.Bitmap.createBitmap(bmp, 1, 1, cw, ch)
+            val pngOut = java.io.ByteArrayOutputStream()
+            cropped.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, pngOut)
+            val png = pngOut.toByteArray()
+
+            val chunk = java.io.ByteArrayOutputStream()
+            val cd = java.io.DataOutputStream(chunk)
+            val typeBytes = "npTc".toByteArray(Charsets.US_ASCII)
+            cd.writeInt(npData.size)
+            cd.write(typeBytes)
+            cd.write(npData)
+            val crc = java.util.zip.CRC32()
+            crc.update(typeBytes)
+            crc.update(npData)
+            cd.writeInt(crc.value.toInt())
+            cd.flush()
+
+            // signature(8) + IHDR chunk (4 len + 4 type + 13 data + 4 crc) = 33
+            val insertAt = 33
+            dst.parentFile?.mkdirs()
+            val result = java.io.ByteArrayOutputStream()
+            result.write(png, 0, insertAt)
+            result.write(chunk.toByteArray())
+            result.write(png, insertAt, png.size - insertAt)
+            dst.writeBytes(result.toByteArray())
+            log.appendLine("Converted nine-patch ${src.name}: x=$xd y=$yd pad=[$padL,$padT,$padR,$padB]")
+            true
+        } catch (e: Throwable) {
+            log.appendLine("Warning: nine-patch conversion failed for ${src.name}: $e")
+            false
         }
     }
 
