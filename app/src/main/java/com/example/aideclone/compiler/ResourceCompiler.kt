@@ -200,6 +200,28 @@ object ResourceCompiler {
             // "#FFFFFF" makes Android try to load it as a file path
             // (".xml extension required") the moment a theme reads it.
             val pendingRefValues = mutableListOf<Pair<com.reandroid.arsc.value.Entry, String>>()
+            // attr name -> (isFlag, symbol -> int). Runtime never reads enum/
+            // flag symbols from the APK, only the finished integer stored at
+            // each use site, so recording them here is enough to encode
+            // style items like cornerFamily=rounded or iconGravity=start.
+            val attrSymbols = mutableMapOf<String, Pair<Boolean, Map<String, Int>>>()
+            fun recordAttrSymbols(attrNode: Element) {
+                val attrName = attrNode.getAttribute("name")
+                if (attrName.isBlank() || attrName.startsWith("android:")) return
+                val symbols = LinkedHashMap<String, Int>()
+                var isFlag = false
+                val kids = attrNode.childNodes
+                for (k in 0 until kids.length) {
+                    val kid = kids.item(k)
+                    if (kid !is Element) continue
+                    if (kid.tagName != "enum" && kid.tagName != "flag") continue
+                    if (kid.tagName == "flag") isFlag = true
+                    val symName = kid.getAttribute("name")
+                    val symVal = try { java.lang.Long.decode(kid.getAttribute("value").trim()).toInt() } catch (e: Exception) { null }
+                    if (symName.isNotBlank() && symVal != null) symbols[symName] = symVal
+                }
+                if (symbols.isNotEmpty()) attrSymbols[attrName] = isFlag to symbols
+            }
             val typedValueTypes = setOf("color", "dimen", "bool", "integer", "fraction")
             fun setSimpleValue(entry: com.reandroid.arsc.value.Entry?, resType: String, rawText: String) {
                 if (entry == null) return
@@ -250,6 +272,25 @@ object ResourceCompiler {
             // with NumberFormatException at inflate time.
             fun encodeEnumOrFlag(itemName: String, text: String): com.reandroid.arsc.coder.EncodeResult? {
                 return try {
+                    if (!itemName.startsWith("android:")) {
+                        val rec = attrSymbols[itemName]
+                        if (rec != null) {
+                            val (flag, syms) = rec
+                            if (flag) {
+                                var acc = 0
+                                var ok = true
+                                for (part in text.split('|')) {
+                                    val v = syms[part.trim()]
+                                    if (v == null) { ok = false; break }
+                                    acc = acc or v
+                                }
+                                if (ok) return com.reandroid.arsc.coder.EncodeResult(com.reandroid.arsc.value.ValueType.INT_HEX, acc)
+                            } else {
+                                val v = syms[text.trim()]
+                                if (v != null) return com.reandroid.arsc.coder.EncodeResult(com.reandroid.arsc.value.ValueType.INT_DEC, v)
+                            }
+                        }
+                    }
                     val isAndroid = itemName.startsWith("android:")
                     val attrName = itemName.removePrefix("android:")
                     var entry: com.reandroid.arsc.value.Entry? = null
@@ -364,7 +405,7 @@ object ResourceCompiler {
                                     }
                                     "attr" -> {
                                         val name = node.getAttribute("name")
-                                        if (name.isNotBlank()) register(pkg, "attr", name)
+                                        if (name.isNotBlank()) { register(pkg, "attr", name); recordAttrSymbols(node) }
                                     }
                                     "item" -> {
                                         // Generic <item name="..." type="...">
@@ -399,6 +440,7 @@ object ResourceCompiler {
                                             val attrName = attrNode.getAttribute("name")
                                             if (attrName.isNotBlank()) {
                                                 if (!attrName.startsWith("android:")) register(pkg, "attr", attrName)
+                                                recordAttrSymbols(attrNode)
                                                 attrNames.add(attrName)
                                             }
                                         }
