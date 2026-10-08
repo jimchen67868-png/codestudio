@@ -205,6 +205,32 @@ object ResourceCompiler {
             // each use site, so recording them here is enough to encode
             // style items like cornerFamily=rounded or iconGravity=start.
             val attrSymbols = mutableMapOf<String, Pair<Boolean, Map<String, Int>>>()
+            // aapt2-only <macro name="x">text</macro>: every @macro/x is
+            // replaced by the macro's text BEFORE the value is encoded
+            // (Material 1.11 declares ~376, e.g. "?attr/colorError").
+            val macros = mutableMapOf<String, String>()
+            fun expandMacros(text: String): String {
+                if (!text.contains("@macro/")) return text
+                var out = text
+                var rounds = 0
+                while (out.contains("@macro/") && rounds < 10) {
+                    val next = Regex("@macro/([A-Za-z0-9_.]+)").replace(out) { m -> macros[m.groupValues[1]] ?: m.value }
+                    if (next == out) break
+                    out = next
+                    rounds++
+                }
+                return out
+            }
+            fun expandMacrosInFile(src: File): File {
+                val original = try { src.readText() } catch (ex: Exception) { return src }
+                if (!original.contains("@macro/")) return src
+                val expanded = expandMacros(original)
+                if (expanded == original) return src
+                return File.createTempFile("macro_", ".xml").apply {
+                    writeText(expanded)
+                    deleteOnExit()
+                }
+            }
             fun recordAttrSymbols(attrNode: Element) {
                 val attrName = attrNode.getAttribute("name")
                 if (attrName.isBlank() || attrName.startsWith("android:")) return
@@ -225,7 +251,7 @@ object ResourceCompiler {
             val typedValueTypes = setOf("color", "dimen", "bool", "integer", "fraction")
             fun setSimpleValue(entry: com.reandroid.arsc.value.Entry?, resType: String, rawText: String) {
                 if (entry == null) return
-                val text = rawText.trim()
+                val text = expandMacros(rawText).trim()
                 if (resType !in typedValueTypes || text.isEmpty()) {
                     entry.setValueAsString(rawText)
                     return
@@ -319,7 +345,7 @@ object ResourceCompiler {
             }
 
             fun encodeStyleItemValue(rawValue: String, itemName: String = ""): StyleBagItem? {
-                val trimmed = rawValue.trim()
+                val trimmed = expandMacros(rawValue).trim()
                 if (trimmed.isEmpty()) return null
 
                 if (trimmed.startsWith("@")) {
@@ -429,6 +455,10 @@ object ResourceCompiler {
                                             val entry = register(pkg, itemType, name)
                                             if (textValue.isNotBlank()) setSimpleValue(entry, itemType, textValue)
                                         }
+                                    }
+                                    "macro" -> {
+                                        val macroName = node.getAttribute("name")
+                                        if (macroName.isNotBlank()) macros[macroName] = (node.textContent ?: "").trim()
                                     }
                                     "declare-styleable" -> {
                                         // Nested <attr> children declare
@@ -574,7 +604,7 @@ object ResourceCompiler {
                             compiledFile.parentFile?.mkdirs()
                             val parser = KXmlParser()
                             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-                            FileInputStream(stripToolsAttrs(resFile)).use { input ->
+                            FileInputStream(expandMacrosInFile(stripToolsAttrs(resFile))).use { input ->
                                 parser.setInput(input, null)
                                 val xmlDoc = ResXmlDocument()
                                 xmlDoc.setPackageBlock(packageBlock)
