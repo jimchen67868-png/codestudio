@@ -284,10 +284,16 @@ object ResourceCompiler {
                                     if (v == null) { ok = false; break }
                                     acc = acc or v
                                 }
-                                if (ok) return com.reandroid.arsc.coder.EncodeResult(com.reandroid.arsc.value.ValueType.INT_HEX, acc)
+                                if (ok) {
+                                    val enc = ValueCoder.encode("0x" + Integer.toHexString(acc))
+                                    if (enc != null && !enc.isError) return enc
+                                }
                             } else {
                                 val v = syms[text.trim()]
-                                if (v != null) return com.reandroid.arsc.coder.EncodeResult(com.reandroid.arsc.value.ValueType.INT_DEC, v)
+                                if (v != null) {
+                                    val enc = ValueCoder.encode(v.toString())
+                                    if (enc != null && !enc.isError) return enc
+                                }
                             }
                         }
                     }
