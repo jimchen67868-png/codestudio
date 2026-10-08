@@ -367,7 +367,7 @@ object ResourceCompiler {
                                             if (attrNode !is Element || attrNode.tagName != "attr") continue
                                             val attrName = attrNode.getAttribute("name")
                                             if (attrName.isNotBlank()) {
-                                                register(pkg, "attr", attrName)
+                                                if (!attrName.startsWith("android:")) register(pkg, "attr", attrName)
                                                 attrNames.add(attrName)
                                             }
                                         }
@@ -856,7 +856,7 @@ object ResourceCompiler {
                 for ((sname, anames) in sm) {
                     if (mergedStyleables.containsKey(sname)) continue
                     mergedStyleables[sname] = anames
-                        .mapNotNull { n -> mergedAttrIds[n]?.let { id -> n to id } }
+                        .mapNotNull { n -> (mergedAttrIds[n] ?: (if (n.startsWith("android:")) resolveFramework("attr", n.removePrefix("android:")) else null))?.let { id -> n to id } }
                         .sortedBy { it.second }
                 }
             }
@@ -948,7 +948,7 @@ object ResourceCompiler {
                 val pkgStyleables = styleables[pkg]
 
                 fun sortedStyleableAttrs(attrNames: List<String>): List<Pair<String, Int>> =
-                    attrNames.mapNotNull { name -> pkgAttrIds[name]?.let { id -> name to id } }
+                    attrNames.mapNotNull { name -> (pkgAttrIds[name] ?: (if (name.startsWith("android:")) resolveFramework("attr", name.removePrefix("android:")) else null))?.let { id -> name to id } }
                         .sortedBy { it.second }
 
                 val rFile: File
