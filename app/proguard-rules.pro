@@ -85,3 +85,6 @@
 # General Android keep rules AGP already applies by default for
 # manifest-declared components (activities, providers, etc.) — no need
 # to duplicate those here.
+
+# KSP spike: replacement for IntelliJ Unsafe helper, found via parent-first lookup
+-keep class ksp.com.intellij.util.containers.Unsafe { *; }
