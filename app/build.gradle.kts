@@ -226,6 +226,7 @@ tasks.register<Copy>("bundleKotlinStdlib") {
 //      looking for if it's missing.
 val isolatedKotlinCompiler: Configuration by configurations.creating
 val r8Tool: Configuration by configurations.creating
+val kspRuntime: Configuration by configurations.creating
 
 dependencies {
     isolatedKotlinCompiler("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10")
@@ -329,7 +330,73 @@ tasks.register("buildIsolatedKotlinCompilerBundle") {
     }
 }
 
+// SPIKE: KSP2 in its own dex bundle (ksp-isolated.jar), same packaging as the
+// compiler bundle. isTransitive = false so the uber jar does not drag in a
+// second kotlin-compiler-embeddable; stdlib/coroutines/compiler classes come
+// from the parent classloaders at runtime.
+dependencies {
+    kspRuntime("com.google.devtools.ksp:symbol-processing-aa-embeddable:2.3.10") { isTransitive = false }
+    kspRuntime("com.google.devtools.ksp:symbol-processing-api:2.3.10") { isTransitive = false }
+    kspRuntime("com.google.devtools.ksp:symbol-processing-common-deps:2.3.10") { isTransitive = false }
+}
+
+tasks.register("buildKspBundle") {
+    val dexOutputDir = layout.buildDirectory.dir("ksp-dex").get().asFile
+    val bundleOutput = file("src/main/assets/ksp-isolated.jar")
+    val sourceJars = kspRuntime
+    val compilerJars = isolatedKotlinCompiler
+
+    doLast {
+        dexOutputDir.deleteRecursively()
+        dexOutputDir.mkdirs()
+
+        val androidLibArgs = android.bootClasspath.flatMap { listOf("--lib", it.absolutePath) }
+        // Compiler/stdlib/coroutines jars are classpath-only for D8 (needed
+        // for desugaring), NOT dexed into this bundle.
+        val classpathArgs = compilerJars.files.flatMap { listOf("--classpath", it.absolutePath) }
+        val jarFiles = sourceJars.files.toList()
+
+        project.javaexec {
+            classpath = r8Tool
+            mainClass.set("com.android.tools.r8.D8")
+            args = listOf(
+                "--min-api", "26",
+                "--output", dexOutputDir.absolutePath
+            ) + androidLibArgs + classpathArgs + jarFiles.map { it.absolutePath }
+        }
+
+        bundleOutput.parentFile.mkdirs()
+        if (bundleOutput.exists()) bundleOutput.delete()
+
+        ZipOutputStream(bundleOutput.outputStream()).use { zos ->
+            val writtenEntries = mutableSetOf<String>()
+            fun writeEntry(name: String, bytes: ByteArray) {
+                if (writtenEntries.add(name)) {
+                    zos.putNextEntry(ZipEntry(name))
+                    zos.write(bytes)
+                    zos.closeEntry()
+                }
+            }
+            dexOutputDir.listFiles { f -> f.extension == "dex" }
+                ?.sortedBy { it.name }
+                ?.forEach { writeEntry(it.name, it.readBytes()) }
+            jarFiles.forEach { jarFile ->
+                ZipFile(jarFile).use { zip ->
+                    zip.entries().asSequence()
+                        .filter { !it.isDirectory }
+                        .forEach { entry ->
+                            zip.getInputStream(entry).use { input ->
+                                writeEntry(entry.name, input.readBytes())
+                            }
+                        }
+                }
+            }
+        }
+    }
+}
+
 tasks.named("preBuild") {
     dependsOn("bundleKotlinStdlib")
     dependsOn("buildIsolatedKotlinCompilerBundle")
+    dependsOn("buildKspBundle")
 }

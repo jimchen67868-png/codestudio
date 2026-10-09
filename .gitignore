@@ -9,3 +9,5 @@ captures/
 .cxx/
 *.apk
 *.class
+
+app/src/main/assets/ksp-isolated.jar

@@ -31,7 +31,7 @@ object IsolatedKotlinCompilerLoader {
     private const val BUNDLE_ASSET_NAME = "kotlin-compiler-isolated.jar"
     private var cachedClassLoader: ClassLoader? = null
 
-    private fun getClassLoader(context: Context): ClassLoader {
+    internal fun getClassLoader(context: Context): ClassLoader {
         cachedClassLoader?.let { return it }
 
         val appContext = context.applicationContext

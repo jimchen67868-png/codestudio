@@ -172,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         menu.add(0, MENU_IMPORT_FRAMEWORK, 2, "Import Framework Resources")
         menu.add(0, MENU_IMPORT_LIBRARY, 2, "Import Library JAR")
         menu.add(0, MENU_MANAGE_LIBRARIES, 2, "Manage Libraries")
+        menu.add(0, 9917, 9, "KSP self-test")
         menu.add(0, MENU_RAW_OUTPUT, 3, "Show Raw Compiler Output")
         menu.add(0, MENU_OPEN_PROJECT, 4, "Open Project")
         menu.add(0, MENU_STORAGE_PERMISSION, 5, "Grant Storage Access")
@@ -186,6 +187,7 @@ class MainActivity : AppCompatActivity() {
             MENU_IMPORT_FRAMEWORK -> { importFrameworkResourcesLauncher.launch(arrayOf("*/*")); true }
             MENU_IMPORT_LIBRARY -> { importLibraryJarLauncher.launch(arrayOf("*/*")); true }
             MENU_MANAGE_LIBRARIES -> { showManageLibrariesDialog(); true }
+            9917 -> { runKspSelfTest(); true }
             MENU_RAW_OUTPUT -> {
                 val raw = CompileResultStore.lastResult?.rawOutput
                 showBuildLog(if (raw.isNullOrBlank()) "No compile run yet, or ECJ produced no console output." else raw)
@@ -489,6 +491,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun runKspSelfTest() {
+        Toast.makeText(this, "Running KSP self-test (first run copies a large bundle)...", Toast.LENGTH_LONG).show()
+        val worker = Thread(null, {
+            val result = try {
+                com.example.aideclone.compiler.KspRunner.selfTest(applicationContext)
+            } catch (e: Throwable) {
+                "selfTest crashed: " + e.stackTraceToString().take(3000)
+            }
+            runOnUiThread { showBuildLog(result) }
+        }, "ksp-selftest", 256L * 1024 * 1024)
+        worker.start()
     }
 
     private fun showManageLibrariesDialog() {
