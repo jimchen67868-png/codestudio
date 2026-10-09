@@ -88,3 +88,6 @@
 
 # KSP spike: replacement for IntelliJ Unsafe helper, found via parent-first lookup
 -keep class ksp.com.intellij.util.containers.Unsafe { *; }
+
+# KSP spike: Caffeine read-buffer replacement
+-keep class ksp.com.github.benmanes.caffeine.cache.** { *; }
