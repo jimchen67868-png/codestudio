@@ -23,6 +23,17 @@ class ManagementFactory {
     companion object {
         @JvmStatic
         fun getThreadMXBean(): ThreadMXBean = StubThreadMXBean()
+
+        @JvmStatic
+        fun getMemoryMXBean(): MemoryMXBean = StubMemoryMXBean()
+
+        // Empty on purpose: IntelliJ's low-memory watcher iterates these and
+        // registers thresholds; with nothing to iterate it simply never fires.
+        @JvmStatic
+        fun getMemoryPoolMXBeans(): List<MemoryPoolMXBean> = emptyList()
+
+        @JvmStatic
+        fun getGarbageCollectorMXBeans(): List<GarbageCollectorMXBean> = emptyList()
     }
 }
 
@@ -95,4 +106,56 @@ private class StubThreadMXBean : ThreadMXBean {
         lockedSynchronizers: Boolean
     ): Array<ThreadInfo?> = arrayOfNulls(ids.size)
     override fun dumpAllThreads(lockedMonitors: Boolean, lockedSynchronizers: Boolean): Array<ThreadInfo?> = arrayOfNulls(0)
+}
+
+
+enum class MemoryType { HEAP, NON_HEAP }
+
+class MemoryUsage(private val maxBytes: Long) {
+    fun getMax(): Long = maxBytes
+    fun getUsed(): Long = 0L
+    fun getCommitted(): Long = 0L
+    fun getInit(): Long = 0L
+}
+
+interface MemoryMXBean : PlatformManagedObject {
+    fun getHeapMemoryUsage(): MemoryUsage
+    fun getNonHeapMemoryUsage(): MemoryUsage
+    fun gc()
+}
+
+interface MemoryPoolMXBean : PlatformManagedObject {
+    fun getName(): String
+    fun getType(): MemoryType
+    fun getUsage(): MemoryUsage
+    fun isUsageThresholdSupported(): Boolean
+    fun isCollectionUsageThresholdSupported(): Boolean
+    fun setUsageThreshold(threshold: Long)
+    fun setCollectionUsageThreshold(threshold: Long)
+}
+
+interface GarbageCollectorMXBean : PlatformManagedObject {
+    fun getName(): String
+    fun getCollectionCount(): Long
+    fun getCollectionTime(): Long
+}
+
+// Must also be a NotificationEmitter: LowMemoryWatcherManager casts the memory
+// bean to it and registers a listener. Registration is accepted and ignored.
+private class StubMemoryMXBean : MemoryMXBean, javax.management.NotificationEmitter {
+    override fun getObjectName(): javax.management.ObjectName? = null
+    override fun getHeapMemoryUsage(): MemoryUsage = MemoryUsage(Runtime.getRuntime().maxMemory())
+    override fun getNonHeapMemoryUsage(): MemoryUsage = MemoryUsage(-1L)
+    override fun gc() {}
+    override fun addNotificationListener(
+        listener: javax.management.NotificationListener,
+        filter: javax.management.NotificationFilter?,
+        handback: Any?
+    ) {}
+    override fun removeNotificationListener(listener: javax.management.NotificationListener) {}
+    override fun removeNotificationListener(
+        listener: javax.management.NotificationListener,
+        filter: javax.management.NotificationFilter?,
+        handback: Any?
+    ) {}
 }
