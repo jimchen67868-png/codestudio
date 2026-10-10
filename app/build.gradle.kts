@@ -338,6 +338,15 @@ dependencies {
     kspRuntime("com.google.devtools.ksp:symbol-processing-aa-embeddable:2.3.10") { isTransitive = false }
     kspRuntime("com.google.devtools.ksp:symbol-processing-api:2.3.10") { isTransitive = false }
     kspRuntime("com.google.devtools.ksp:symbol-processing-common-deps:2.3.10") { isTransitive = false }
+    kspRuntime("androidx.room:room-compiler:2.6.1") { isTransitive = false }
+    kspRuntime("androidx.room:room-compiler-processing:2.6.1") { isTransitive = false }
+    kspRuntime("androidx.room:room-common:2.6.1") { isTransitive = false }
+    kspRuntime("androidx.room:room-migration:2.6.1") { isTransitive = false }
+    kspRuntime("com.google.auto:auto-common:0.11") { isTransitive = false }
+    kspRuntime("com.squareup:javapoet:1.13.0") { isTransitive = false }
+    kspRuntime("com.squareup:kotlinpoet:1.14.2") { isTransitive = false }
+    kspRuntime("com.squareup:kotlinpoet-javapoet:1.14.2") { isTransitive = false }
+    kspRuntime("commons-codec:commons-codec:1.15") { isTransitive = false }
 }
 
 tasks.register("buildKspBundle") {
