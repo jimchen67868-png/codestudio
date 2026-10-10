@@ -48,9 +48,34 @@ object KspRunner {
 
             val tmp = File(context.cacheDir, "ksp-selftest").apply { deleteRecursively(); mkdirs() }
             val src = File(tmp, "src").apply { mkdirs() }
-            File(src, "Hello.kt").writeText("package demo\n\nclass Hello {\n    fun hi(): Int = 1\n}\n")
+            val roomDir = File("/storage/emulated/0/Download/ksp-room-libs")
+            val roomJars = roomDir.listFiles { f -> f.name.endsWith(".jar") }?.toList() ?: emptyList()
+            val roomMode = roomJars.any { it.name.startsWith("room-runtime") }
+            out.appendLine("roomMode=$roomMode")
+            if (roomMode) {
+                File(src, "Room.kt").writeText("""package demo
+
+import androidx.room.*
+
+@Entity(tableName = "notes")
+data class Note(@PrimaryKey val id: Int, val text: String)
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes") fun all(): List<Note>
+    @Insert fun add(n: Note)
+}
+
+@Database(entities = [Note::class], version = 1, exportSchema = false)
+abstract class AppDb : RoomDatabase() {
+    abstract fun noteDao(): NoteDao
+}
+""")
+            } else {
+                File(src, "Hello.kt").writeText("package demo\n\nclass Hello {\n    fun hi(): Int = 1\n}\n")
+            }
             val sdk = File(context.filesDir, "sdk")
-            val libs = listOf(File(sdk, "android.jar"), File(sdk, "kotlin-stdlib.jar")).filter { it.exists() }
+            val libs = (listOf(File(sdk, "android.jar"), File(sdk, "kotlin-stdlib.jar")).filter { it.exists() } + roomJars).distinctBy { it.name }
             out.appendLine("libraries: " + libs.joinToString { it.name })
 
             val builderClass = l.loadClass("com.google.devtools.ksp.processing.KSPJvmConfig\$Builder")
@@ -90,10 +115,15 @@ object KspRunner {
             val spClass = l.loadClass("com.google.devtools.ksp.impl.KotlinSymbolProcessing")
             val cfgClass = l.loadClass("com.google.devtools.ksp.processing.KSPConfig")
             val ctor = spClass.getConstructor(cfgClass, List::class.java, loggerIface)
-            val ksp = ctor.newInstance(config, emptyList<Any>(), logger)
+            val providers: List<Any> = if (roomMode) {
+                val pc = l.loadClass("androidx.room.RoomKspProcessor\$Provider")
+                listOf(pc.getDeclaredConstructor().newInstance())
+            } else emptyList()
+            val ksp = ctor.newInstance(config, providers, logger)
             out.appendLine("KotlinSymbolProcessing constructed, executing...")
             val exit = spClass.getMethod("execute").invoke(ksp)
             out.appendLine("RESULT exit=$exit after ${System.currentTimeMillis() - started} ms")
+            tmp.walkTopDown().filter { it.isFile && it.path.contains("/out/") }.forEach { out.appendLine("generated: " + it.relativeTo(tmp)) }
         } catch (t: Throwable) {
             val cause = if (t is InvocationTargetException) (t.cause ?: t) else t
             out.appendLine("FAILED: $cause")
