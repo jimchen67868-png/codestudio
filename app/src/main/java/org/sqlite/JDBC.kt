@@ -13,5 +13,4 @@ class JDBC : java.sql.Driver {
     override fun getMajorVersion(): Int = 0
     override fun getMinorVersion(): Int = 0
     override fun jdbcCompliant(): Boolean = false
-    override fun getParentLogger(): java.util.logging.Logger = throw java.sql.SQLFeatureNotSupportedException()
 }
