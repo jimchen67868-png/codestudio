@@ -52,7 +52,12 @@ object KspRunner {
             val roomJars = roomDir.listFiles { f -> f.name.endsWith(".jar") }?.toList() ?: emptyList()
             val roomMode = roomJars.any { it.name.startsWith("room-runtime") }
             out.appendLine("roomMode=$roomMode")
-            if (roomMode) {
+            val userSrc = File(roomDir, "src")
+            val userFiles = userSrc.walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }.toList()
+            if (roomMode && userFiles.isNotEmpty()) {
+                userFiles.forEach { it.copyTo(File(src, it.relativeTo(userSrc).path), true) }
+                out.appendLine("user sources: " + userFiles.size)
+            } else if (roomMode) {
                 File(src, "Room.kt").writeText("""package demo
 
 import androidx.room.*
@@ -124,6 +129,14 @@ abstract class AppDb : RoomDatabase() {
             val exit = spClass.getMethod("execute").invoke(ksp)
             out.appendLine("RESULT exit=$exit after ${System.currentTimeMillis() - started} ms")
             tmp.walkTopDown().filter { it.isFile && it.path.contains("/out/") }.forEach { out.appendLine("generated: " + it.relativeTo(tmp)) }
+            if (roomMode) {
+                try {
+                    val dst = File(roomDir, "out")
+                    dst.deleteRecursively()
+                    File(tmp, "out").copyRecursively(dst, true)
+                    out.appendLine("copied output to " + dst.path)
+                } catch (e: Exception) { out.appendLine("copy failed: $e") }
+            }
         } catch (t: Throwable) {
             val cause = if (t is InvocationTargetException) (t.cause ?: t) else t
             out.appendLine("FAILED: $cause")
