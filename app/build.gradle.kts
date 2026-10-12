@@ -357,6 +357,8 @@ tasks.register("buildKspBundle") {
     val bundleOutput = file("src/main/assets/ksp-isolated.jar")
     val sourceJars = kspRuntime
     val compilerJars = isolatedKotlinCompiler
+    val patchDir = layout.buildDirectory.dir("ksp-patched").get().asFile
+    val patcher = file("tools/patch_try_set_accessible.py")
 
     doLast {
         dexOutputDir.deleteRecursively()
@@ -366,7 +368,19 @@ tasks.register("buildKspBundle") {
         // Compiler/stdlib/coroutines jars are classpath-only for D8 (needed
         // for desugaring), NOT dexed into this bundle.
         val classpathArgs = compilerJars.files.flatMap { listOf("--classpath", it.absolutePath) }
-        val jarFiles = sourceJars.files.toList()
+        patchDir.deleteRecursively()
+        patchDir.mkdirs()
+        val jarFiles = sourceJars.files.toList().map { jar ->
+            if (jar.name.startsWith("room-compiler-processing")) {
+                val dst = File(patchDir, jar.name)
+                val pr = ProcessBuilder("python3", patcher.absolutePath, jar.absolutePath, dst.absolutePath)
+                    .redirectErrorStream(true).start()
+                val plog = pr.inputStream.bufferedReader().readText()
+                check(pr.waitFor() == 0) { "trySetAccessible patch failed: " + plog }
+                println(plog.trim())
+                dst
+            } else jar
+        }
 
         project.javaexec {
             classpath = r8Tool
