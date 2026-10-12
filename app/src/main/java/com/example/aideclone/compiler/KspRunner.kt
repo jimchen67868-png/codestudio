@@ -111,7 +111,7 @@ abstract class AppDb : RoomDatabase() {
                     "equals" -> false
                     "toString" -> "ksp-logger"
                     else -> {
-                        out.appendLine("KSP." + m.name + ": " + (args?.joinToString { it.toString() } ?: ""))
+                        out.appendLine("KSP." + m.name + ": " + (args?.joinToString { java.util.Objects.toString(it) } ?: ""))
                         null
                     }
                 }
