@@ -348,6 +348,8 @@ dependencies {
     kspRuntime("com.squareup:kotlinpoet-javapoet:1.14.2") { isTransitive = false }
     kspRuntime("commons-codec:commons-codec:1.15") { isTransitive = false }
     kspRuntime("com.google.auto.value:auto-value-annotations:1.6.3") { isTransitive = false }
+    kspRuntime("com.google.guava:guava:31.1-android") { isTransitive = false }
+    kspRuntime("com.google.guava:failureaccess:1.0.1") { isTransitive = false }
 }
 
 tasks.register("buildKspBundle") {
