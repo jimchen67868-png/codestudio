@@ -294,7 +294,21 @@ class MainActivity : AppCompatActivity() {
                 val extraLibraries = importedLibraryJars()
                 val result = if (hasKotlin) {
                     val stdlib = ensureKotlinStdlib()
-                    KotlinCompileEngine.compileProject(applicationContext, project.rootDir, androidJar, stdlib, extraLibraries)
+                    val ksp = androidJar?.takeIf { it.exists() }?.let {
+                        com.example.aideclone.compiler.KspRunner.runProject(applicationContext, project.rootDir, it, stdlib, extraLibraries)
+                    }
+                    val kspPrefix = if (ksp != null && ksp.ran) "--- KSP ---\n" + ksp.log + "\n" else ""
+                    if (ksp != null && ksp.ran && !ksp.success) {
+                        com.example.aideclone.compiler.CompileResult(false, emptyList(), kspPrefix)
+                    } else {
+                        var r = KotlinCompileEngine.compileProject(applicationContext, project.rootDir, androidJar, stdlib, extraLibraries)
+                        if (r.success && ksp != null && ksp.ran && ksp.javaDir.walkTopDown().any { it.isFile && it.extension == "java" }) {
+                            val j = CompileEngine.compileProject(project.rootDir, androidJar, extraLibraries + File(project.rootDir, "build/classes"), ksp.javaDir, true)
+                            r = com.example.aideclone.compiler.CompileResult(j.success, r.diagnostics + j.diagnostics,
+                                r.rawOutput + "\n--- KSP generated Java ---\n" + j.rawOutput)
+                        }
+                        com.example.aideclone.compiler.CompileResult(r.success, r.diagnostics, kspPrefix + r.rawOutput)
+                    }
                 } else {
                     CompileEngine.compileProject(project.rootDir, androidJar, extraLibraries)
                 }

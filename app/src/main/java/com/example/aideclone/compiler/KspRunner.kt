@@ -39,6 +39,70 @@ object KspRunner {
         return loader
     }
 
+    class KspResult(val ran: Boolean, val success: Boolean, val log: String, val javaDir: File)
+
+    fun runProject(context: Context, projectRoot: File, androidJar: File, stdlib: File, extraLibs: List<File>): KspResult {
+        val javaDir = File(projectRoot, "build/generated/ksp/java")
+        javaDir.deleteRecursively()
+        val libs = (listOf(androidJar, stdlib) + extraLibs).distinctBy { it.name }
+        if (libs.none { it.name.startsWith("room-runtime") }) return KspResult(false, true, "", javaDir)
+        val out = StringBuilder()
+        var ok = false
+        try {
+            val l = kspLoader(context)
+            val tmp = File(context.cacheDir, "ksp-build").apply { deleteRecursively(); mkdirs() }
+            val src = File(tmp, "src").apply { mkdirs() }
+            projectRoot.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "java") && !it.relativeTo(projectRoot).path.startsWith("build/") }
+                .forEach { it.copyTo(File(src, it.relativeTo(projectRoot).path), true) }
+            val builderClass = l.loadClass("com.google.devtools.ksp.processing.KSPJvmConfig\$Builder")
+            val builder = builderClass.getDeclaredConstructor().newInstance()
+            fun set(name: String, argType: Class<*>, value: Any?) {
+                builderClass.getMethod(name, argType).invoke(builder, value)
+            }
+            set("setModuleName", String::class.java, "project")
+            set("setSourceRoots", List::class.java, listOf(src))
+            set("setLibraries", List::class.java, libs)
+            set("setProjectBaseDir", File::class.java, tmp)
+            set("setOutputBaseDir", File::class.java, File(tmp, "out"))
+            set("setCachesDir", File::class.java, File(tmp, "caches"))
+            set("setClassOutputDir", File::class.java, File(tmp, "out/classes"))
+            set("setKotlinOutputDir", File::class.java, File(tmp, "out/kotlin"))
+            set("setJavaOutputDir", File::class.java, File(tmp, "out/java"))
+            set("setResourceOutputDir", File::class.java, File(tmp, "out/res"))
+            set("setLanguageVersion", String::class.java, "2.3")
+            set("setApiVersion", String::class.java, "2.3")
+            set("setJvmTarget", String::class.java, "17")
+            val config = builderClass.getMethod("build").invoke(builder)
+            val loggerIface = l.loadClass("com.google.devtools.ksp.processing.KSPLogger")
+            val logger = Proxy.newProxyInstance(l, arrayOf(loggerIface)) { _, m, args ->
+                when (m.name) {
+                    "hashCode" -> 0
+                    "equals" -> false
+                    "toString" -> "ksp-logger"
+                    else -> { out.appendLine("KSP." + m.name + ": " + (args?.joinToString { java.util.Objects.toString(it) } ?: "")); null }
+                }
+            }
+            val spClass = l.loadClass("com.google.devtools.ksp.impl.KotlinSymbolProcessing")
+            val cfgClass = l.loadClass("com.google.devtools.ksp.processing.KSPConfig")
+            val ctor = spClass.getConstructor(cfgClass, List::class.java, loggerIface)
+            val pc = l.loadClass("androidx.room.RoomKspProcessor\$Provider")
+            val ksp = ctor.newInstance(config, listOf(pc.getDeclaredConstructor().newInstance()), logger)
+            val exit = spClass.getMethod("execute").invoke(ksp)
+            out.appendLine("KSP exit=$exit")
+            ok = exit.toString() == "OK"
+            if (ok) {
+                fixContinuationWildcards(File(tmp, "out/java"), out)
+                File(tmp, "out/java").takeIf { it.exists() }?.copyRecursively(javaDir, true)
+            }
+        } catch (t: Throwable) {
+            val cause = if (t is InvocationTargetException) (t.cause ?: t) else t
+            out.appendLine("KSP FAILED: $cause")
+            out.appendLine(cause.stackTraceToString().lines().take(30).joinToString("\n"))
+        }
+        return KspResult(true, ok, out.toString(), javaDir)
+    }
+
     fun selfTest(context: Context): String {
         val out = StringBuilder()
         val started = System.currentTimeMillis()

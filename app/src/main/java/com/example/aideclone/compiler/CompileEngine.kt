@@ -38,7 +38,8 @@ object CompileEngine {
         """^\d+\.\s+(ERROR|WARNING)\s+in\s+(.+?)\s+\(at line (\d+)\)$"""
     )
 
-    fun compileProject(projectRoot: File, androidJar: File?, extraLibraries: List<File> = emptyList()): CompileResult {
+    fun compileProject(projectRoot: File, androidJar: File?, extraLibraries: List<File> = emptyList(),
+        sourceRoot: File = projectRoot, keepOutput: Boolean = false): CompileResult {
         if (androidJar == null || !androidJar.exists()) {
             return CompileResult(
                 success = false,
@@ -50,7 +51,7 @@ object CompileEngine {
             )
         }
 
-        val sourceFiles = collectJavaFiles(projectRoot)
+        val sourceFiles = collectJavaFiles(sourceRoot)
         if (sourceFiles.isEmpty()) {
             return CompileResult(
                 success = false,
@@ -60,7 +61,7 @@ object CompileEngine {
         }
 
         val outputDir = File(projectRoot, "build/classes").apply {
-            deleteRecursively()
+            if (!keepOutput) deleteRecursively()
             mkdirs()
         }
 
