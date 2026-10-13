@@ -359,7 +359,7 @@ tasks.register("buildKspBundle") {
     val compilerJars = isolatedKotlinCompiler
     val patchDir = layout.buildDirectory.dir("ksp-patched").get().asFile
     val patcher = file("tools/patch_try_set_accessible.py")
-    val patcher2 = file("tools/patch_jvm_void.py")
+    val patcher2 = file("tools/patch_jvm_unit.py")
 
     doLast {
         dexOutputDir.deleteRecursively()
