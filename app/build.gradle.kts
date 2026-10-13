@@ -359,6 +359,7 @@ tasks.register("buildKspBundle") {
     val compilerJars = isolatedKotlinCompiler
     val patchDir = layout.buildDirectory.dir("ksp-patched").get().asFile
     val patcher = file("tools/patch_try_set_accessible.py")
+    val patcher2 = file("tools/patch_jvm_void.py")
 
     doLast {
         dexOutputDir.deleteRecursively()
@@ -378,7 +379,13 @@ tasks.register("buildKspBundle") {
                 val plog = pr.inputStream.bufferedReader().readText()
                 check(pr.waitFor() == 0) { "trySetAccessible patch failed: " + plog }
                 println(plog.trim())
-                dst
+                val dst2 = File(patchDir, "v2-" + jar.name)
+                val pr2 = ProcessBuilder("python3", patcher2.absolutePath, dst.absolutePath, dst2.absolutePath)
+                    .redirectErrorStream(true).start()
+                val plog2 = pr2.inputStream.bufferedReader().readText()
+                check(pr2.waitFor() == 0) { "jvm void patch failed: " + plog2 }
+                println(plog2.trim())
+                dst2
             } else jar
         }
 
