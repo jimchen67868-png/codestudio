@@ -128,6 +128,7 @@ abstract class AppDb : RoomDatabase() {
             out.appendLine("KotlinSymbolProcessing constructed, executing...")
             val exit = spClass.getMethod("execute").invoke(ksp)
             out.appendLine("RESULT exit=$exit after ${System.currentTimeMillis() - started} ms")
+            fixContinuationWildcards(File(tmp, "out/java"), out)
             tmp.walkTopDown().filter { it.isFile && it.path.contains("/out/") }.forEach { out.appendLine("generated: " + it.relativeTo(tmp)) }
             if (roomMode) {
                 try {
@@ -143,5 +144,26 @@ abstract class AppDb : RoomDatabase() {
             out.appendLine(cause.stackTraceToString().lines().take(40).joinToString("\n"))
         }
         return out.toString()
+    }
+}
+
+// Room 2.6.1 on-device drops the "? super" wildcard on the synthetic
+// $completion parameter, which javac rejects as a name clash. Restore it.
+private fun fixContinuationWildcards(dir: File, out: StringBuilder) {
+    if (!dir.exists()) return
+    val pat = Regex("""Continuation<(?!\?)(.+)>(\s+)[$]completion\b""")
+    dir.walkTopDown().filter { it.isFile && it.name.endsWith(".java") }.forEach { f ->
+        val text = f.readText()
+        var n = 0
+        val fixed = pat.replace(text) { m ->
+            n++
+            "Continuation<? super " + m.groupValues[1] + ">" + m.groupValues[2] + "\$completion"
+        }
+        if (n > 0) {
+            f.writeText(fixed)
+            out.appendLine("fixed " + n + " continuation params in " + f.name)
+        } else if (text.contains("Continuation<") && !text.contains("Continuation<? super")) {
+            out.appendLine("WARN: " + f.name + " has Continuation<> but no param matched")
+        }
     }
 }
