@@ -1128,6 +1128,12 @@ object ResourceCompiler {
                 rFile.parentFile?.mkdirs()
                 rFile.writeText(rSource)
                 log.appendLine("Generated ${rFile.name} for $pkg: ${rFile.path}")
+                val vbResDir = appResDir
+                if (isKotlinProject && pkg == packageName && vbResDir != null) {
+                    val layoutDirs = vbResDir.listFiles { f -> f.isDirectory && f.name.startsWith("layout") }?.toList() ?: emptyList()
+                    val vbCount = ViewBindingGenerator.generate(layoutDirs, pkg, File(projectRoot, "build/generated/java"))
+                    log.appendLine("ViewBinding: generated $vbCount binding classes for $pkg")
+                }
             }
 
             // Recomputes offsets/sizes/counts after all the mutations
