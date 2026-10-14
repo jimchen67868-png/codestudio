@@ -312,7 +312,12 @@ object ApkBuilder {
                 }
             }
 
-            apkModule.add(ByteInputSource(dexResult.dexFile.readBytes(), "classes.dex"))
+            val extraDex = (dexResult.dexFile.parentFile?.listFiles { f -> f.isFile && Regex("classes\\d*\\.dex").matches(f.name) }?.toList() ?: listOf(dexResult.dexFile))
+                .sortedBy { if (it.name == "classes.dex") 0 else (Regex("\\d+").find(it.name)?.value?.toInt() ?: 1) }
+            for (df in extraDex) {
+                apkModule.add(ByteInputSource(df.readBytes(), df.name))
+                log.appendLine("Added ${df.name}: ${df.length()} bytes")
+            }
 
             val unsignedApk = File(buildDir, "$packageName-unsigned.apk")
             if (unsignedApk.exists()) unsignedApk.delete()
