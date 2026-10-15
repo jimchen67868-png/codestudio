@@ -50,8 +50,9 @@ object KspRunner {
         var ok = false
         try {
             val l = kspLoader(context)
-            context.cacheDir.listFiles { f -> f.name.startsWith("ksp-build") }?.forEach { if (System.currentTimeMillis() - it.lastModified() > 600000) it.deleteRecursively() }
+            context.cacheDir.listFiles { f -> f.name.startsWith("ksp-build") }?.forEach { if (System.currentTimeMillis() - it.lastModified() > 3600000) it.deleteRecursively() }
             val tmp = File(context.cacheDir, "ksp-build-" + System.nanoTime()).apply { mkdirs() }
+            File(tmp, "caches").mkdirs(); File(tmp, "out").mkdirs()
             val src = File(tmp, "src").apply { mkdirs() }
             projectRoot.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "java") && !it.relativeTo(projectRoot).path.startsWith("build/") }
