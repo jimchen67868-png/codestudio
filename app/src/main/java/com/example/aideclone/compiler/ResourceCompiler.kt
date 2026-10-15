@@ -77,7 +77,8 @@ object ResourceCompiler {
         // from the generic <item name=... type="id"/> form (handled
         // separately below) and from every other value type, which all
         // carry actual text content. Real aapt accepts both forms.
-        "id" to "id"
+        "id" to "id",
+        "drawable" to "drawable"
     )
 
     private val ID_ATTR_REGEX = Regex("""@\+?id/([A-Za-z_][A-Za-z0-9_]*)""")
@@ -248,7 +249,7 @@ object ResourceCompiler {
                 }
                 if (symbols.isNotEmpty()) attrSymbols[attrName] = isFlag to symbols
             }
-            val typedValueTypes = setOf("color", "dimen", "bool", "integer", "fraction")
+            val typedValueTypes = setOf("color", "dimen", "bool", "integer", "fraction", "drawable")
             fun setSimpleValue(entry: com.reandroid.arsc.value.Entry?, resType: String, rawText: String) {
                 if (entry == null) return
                 val text = expandMacros(rawText).trim()
@@ -344,6 +345,34 @@ object ResourceCompiler {
                     if (r != null && !r.isError) r else null
                 } catch (e: Exception) {
                     null
+                }
+            }
+
+            val encodedArrayNames = mutableSetOf<String>()
+            fun encodeArrayNode(node: Element) {
+                val aname = node.getAttribute("name")
+                if (aname.isBlank() || !encodedArrayNames.add(aname)) return
+                try {
+                    val aentry = packageBlock.getOrCreate("", "array", aname)
+                    aentry.ensureComplex(true)
+                    val abag = com.reandroid.arsc.value.array.ArrayBag.create(aentry)
+                    val kids = node.childNodes
+                    for (j in 0 until kids.length) {
+                        val k = kids.item(j)
+                        if (k !is Element || k.tagName != "item") continue
+                        val t = (k.textContent ?: "").trim()
+                        val enc = when {
+                            t.startsWith("@") -> ValueCoder.encodeReference(tableBlock, t)
+                            node.tagName != "string-array" -> ValueCoder.encode(t)
+                            else -> null
+                        }
+                        val bi = if (enc != null && !enc.isError)
+                            com.reandroid.arsc.value.array.ArrayBagItem.encoded(enc)
+                        else com.reandroid.arsc.value.array.ArrayBagItem.string(t)
+                        abag.add(bi)
+                    }
+                } catch (e: Exception) {
+                    log.appendLine("Warning: failed to encode array '$aname': ${e.message}")
                 }
             }
 
@@ -486,6 +515,14 @@ object ResourceCompiler {
                                         if (styleableName.isNotBlank() && attrNames.isNotEmpty()) {
                                             styleables.getOrPut(pkg) { mutableMapOf() }[styleableName] = attrNames
                                         }
+                                    }
+                                    "string-array", "integer-array", "array" -> {
+                                        val an = node.getAttribute("name")
+                                        if (an.isNotBlank()) register(pkg, "array", an)
+                                    }
+                                    "plurals" -> {
+                                        val pn = node.getAttribute("name")
+                                        if (pn.isNotBlank()) register(pkg, "plurals", pn)
                                     }
                                     else -> {
                                         val resType = VALUE_RESOURCE_TAGS[node.tagName] ?: continue
@@ -741,6 +778,7 @@ object ResourceCompiler {
                             val children = doc.documentElement.childNodes
                             for (i in 0 until children.length) {
                                 val node = children.item(i)
+                                if (node is Element && (node.tagName == "string-array" || node.tagName == "integer-array" || node.tagName == "array")) { encodeArrayNode(node); continue }
                                 if (node !is Element || node.tagName != "style") continue
                                 val name = node.getAttribute("name")
                                 if (name.isBlank()) continue
