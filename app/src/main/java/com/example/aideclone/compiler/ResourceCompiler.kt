@@ -368,7 +368,7 @@ object ResourceCompiler {
                         }
                         val bi = if (enc != null && !enc.isError)
                             com.reandroid.arsc.value.array.ArrayBagItem.encoded(enc)
-                        else com.reandroid.arsc.value.array.ArrayBagItem.string(t)
+                        else com.reandroid.arsc.value.array.ArrayBagItem.string(tableBlock.stringPool.getOrCreate(t))
                         abag.add(bi)
                     }
                 } catch (e: Exception) {
