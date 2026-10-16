@@ -116,7 +116,13 @@ object ApkBuilder {
             // Fold in the actual resource files (layouts, drawables,
             // etc.) ResourceCompiler registered, alongside the dex below.
             resResult.fileResources.forEach { (apkPath, sourceFile) ->
-                apkModule.add(ByteInputSource(sourceFile.readBytes(), apkPath))
+                val rawSrc = ByteInputSource(sourceFile.readBytes(), apkPath)
+                // raw/ resources must be STORED: openRawResourceFd() (used by
+                // Media3 for android.resource:// URIs) fails on compressed entries.
+                if (Regex("(^|/)raw(-[^/]*)?/").containsMatchIn(apkPath)) {
+                    rawSrc.setMethod(java.util.zip.ZipEntry.STORED)
+                }
+                apkModule.add(rawSrc)
             }
 
             // Real manifest merging: parse the project's actual
