@@ -81,6 +81,37 @@ object ResourceCompiler {
         "drawable" to "drawable"
     )
 
+    private fun unescapeAndroid(s: String): String {
+        if (s.indexOf('\\') < 0) return s
+        val sb = StringBuilder()
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '\\' && i + 1 < s.length) {
+                val n = s[i + 1]
+                if (n == 'u' && i + 6 <= s.length) {
+                    val cp = s.substring(i + 2, i + 6).toIntOrNull(16)
+                    if (cp != null) { sb.append(cp.toChar()); i += 6; continue }
+                }
+                when (n) {
+                    'n' -> sb.append('\n')
+                    't' -> sb.append('\t')
+                    '\'' -> sb.append('\'')
+                    '"' -> sb.append('"')
+                    '@' -> sb.append('@')
+                    '?' -> sb.append('?')
+                    '\\' -> sb.append('\\')
+                    else -> { sb.append(c); sb.append(n) }
+                }
+                i += 2
+                continue
+            }
+            sb.append(c)
+            i++
+        }
+        return sb.toString()
+    }
+
     private val ID_ATTR_REGEX = Regex("""@\+?id/([A-Za-z_][A-Za-z0-9_]*)""")
 
     /**
@@ -254,7 +285,7 @@ object ResourceCompiler {
                 if (entry == null) return
                 val text = expandMacros(rawText).trim()
                 if (resType !in typedValueTypes || text.isEmpty()) {
-                    entry.setValueAsString(rawText)
+                    entry.setValueAsString(unescapeAndroid(rawText))
                     return
                 }
                 if (text.startsWith("@") || text.startsWith("?")) {
@@ -345,6 +376,37 @@ object ResourceCompiler {
                     if (r != null && !r.isError) r else null
                 } catch (e: Exception) {
                     null
+                }
+            }
+
+            val encodedPluralNames = mutableSetOf<String>()
+            fun encodePluralsNode(node: Element) {
+                val pname = node.getAttribute("name")
+                if (pname.isBlank() || !encodedPluralNames.add(pname)) return
+                try {
+                    val pentry = packageBlock.getOrCreate("", "plurals", pname)
+                    pentry.ensureComplex(true)
+                    val pbag = StyleBag.create(pentry)
+                    val items = java.util.TreeMap<Int, StyleBagItem>()
+                    val kids = node.childNodes
+                    for (j in 0 until kids.length) {
+                        val k = kids.item(j)
+                        if (k !is Element || k.tagName != "item") continue
+                        val key = when (k.getAttribute("quantity")) {
+                            "other" -> 0x01000004
+                            "zero" -> 0x01000005
+                            "one" -> 0x01000006
+                            "two" -> 0x01000007
+                            "few" -> 0x01000008
+                            "many" -> 0x01000009
+                            else -> continue
+                        }
+                        val t = unescapeAndroid((k.textContent ?: "").trim())
+                        items[key] = StyleBagItem.string(tableBlock.stringPool.getOrCreate(t))
+                    }
+                    for ((kk, vv) in items) pbag.put(kk, vv)
+                } catch (e: Exception) {
+                    log.appendLine("Warning: failed to encode plurals '$pname': ${e.message}")
                 }
             }
 
@@ -778,6 +840,7 @@ object ResourceCompiler {
                             val children = doc.documentElement.childNodes
                             for (i in 0 until children.length) {
                                 val node = children.item(i)
+                                if (node is Element && node.tagName == "plurals") { encodePluralsNode(node); continue }
                                 if (node is Element && (node.tagName == "string-array" || node.tagName == "integer-array" || node.tagName == "array")) { encodeArrayNode(node); continue }
                                 if (node !is Element || node.tagName != "style") continue
                                 val name = node.getAttribute("name")
