@@ -312,6 +312,19 @@ object ApkBuilder {
                 }
             }
 
+            // Library assets (e.g. media3-effect shaders) imported from AARs
+            // live in <sdk>/libs-assets/<libName>/, next to <sdk>/libs.
+            val addedAssets = HashSet<String>()
+            for (lib in extraLibraries) {
+                val assetsDir = File(lib.parentFile?.parentFile ?: continue, "libs-assets/" + lib.nameWithoutExtension)
+                if (!assetsDir.isDirectory) continue
+                assetsDir.walkTopDown().filter { it.isFile }.forEach { f ->
+                    val apkPath = "assets/" + f.relativeTo(assetsDir).path.replace(File.separatorChar, '/')
+                    if (addedAssets.add(apkPath)) apkModule.add(ByteInputSource(f.readBytes(), apkPath))
+                }
+            }
+            log.appendLine("Added " + addedAssets.size + " library asset file(s)")
+
             val extraDex = (dexResult.dexFile.parentFile?.listFiles { f -> f.isFile && Regex("classes\\d*\\.dex").matches(f.name) }?.toList() ?: listOf(dexResult.dexFile))
                 .sortedBy { if (it.name == "classes.dex") 0 else (Regex("\\d+").find(it.name)?.value?.toInt() ?: 1) }
             for (df in extraDex) {

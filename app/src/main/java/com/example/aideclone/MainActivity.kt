@@ -615,6 +615,18 @@ class MainActivity : AppCompatActivity() {
                 }
                 File(libResDir, ".package").writeText(packageName)
             }
+
+            // assets/ -> sdk/libs-assets/<baseName>/ (e.g. media3-effect's
+            // GLSL shaders). Independent of res/ and the package name.
+            val assetsRoot = File(libraryResDir.parentFile, "libs-assets/$baseName")
+            assetsRoot.deleteRecursively()
+            for (entry in zip.entries().asSequence().filter { it.name.startsWith("assets/") && !it.isDirectory }) {
+                val outFile = File(assetsRoot, entry.name.removePrefix("assets/"))
+                outFile.parentFile?.mkdirs()
+                zip.getInputStream(entry).use { input ->
+                    outFile.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
         }
         tempAar.delete()
     }
