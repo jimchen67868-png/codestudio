@@ -706,7 +706,10 @@ object ResourceCompiler {
                             compiledFile.parentFile?.mkdirs()
                             val parser = KXmlParser()
                             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-                            FileInputStream(expandMacrosInFile(stripToolsAttrs(resFile))).use { input ->
+                            String(expandMacrosInFile(stripToolsAttrs(resFile)).readBytes(), Charsets.ISO_8859_1)
+                                .replace(Regex("""\\u([0-9A-Fa-f]{4})"""), "&#x$1;")
+                                .toByteArray(Charsets.ISO_8859_1)
+                                .inputStream().use { input ->
                                 parser.setInput(input, null)
                                 val xmlDoc = ResXmlDocument()
                                 xmlDoc.setPackageBlock(packageBlock)
