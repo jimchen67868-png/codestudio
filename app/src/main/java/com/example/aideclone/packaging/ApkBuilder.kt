@@ -123,10 +123,6 @@ object ApkBuilder {
                     rawSrc.setMethod(java.util.zip.ZipEntry.STORED)
                 }
                 apkModule.add(rawSrc)
-                if (Regex("(^|/)raw(-[^/]*)?/").containsMatchIn(apkPath)) {
-                    try { apkModule.uncompressedFiles.addPath(apkPath) } catch (e: Exception) { log.appendLine("Warning: uncompressedFiles failed for " + apkPath + ": " + e.message) }
-                    log.appendLine("Marked raw entry uncompressed: " + apkPath)
-                }
             }
 
             // Real manifest merging: parse the project's actual
