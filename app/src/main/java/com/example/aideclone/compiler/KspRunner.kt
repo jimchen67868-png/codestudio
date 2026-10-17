@@ -93,6 +93,10 @@ object KspRunner {
             val exit = spClass.getMethod("execute").invoke(ksp)
             out.appendLine("KSP exit=$exit")
             ok = exit.toString() == "OK"
+            out.appendLine("KSP diag: sources=" + src.walkTopDown().count { it.isFile } +
+                " hasProjectDatabase=" + src.walkTopDown().any { it.isFile && it.name == "ProjectDatabase.kt" } +
+                " libs=" + libs.size + " roomCommon=" + libs.any { it.name.startsWith("room-common") } +
+                " outFiles(java/kotlin/classes/res)=" + listOf("java", "kotlin", "classes", "res").joinToString("/") { d -> File(tmp, "out/" + d).walkTopDown().count { f -> f.isFile }.toString() })
             if (ok) {
                 fixContinuationWildcards(File(tmp, "out/java"), out)
                 File(tmp, "out/java").takeIf { it.exists() }?.copyRecursively(javaDir, true)
